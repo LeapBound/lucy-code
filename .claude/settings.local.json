@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.specify/scripts/bash/setup-plan.sh:*)",
+      "SlashCommand(/speckit.implement)",
+      "Bash(uv sync:*)",
+      "Bash(uv run pytest:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

@@ -74,12 +74,22 @@
 ### Edge Cases
 
 - **Claude Code 执行超时**：如果 AI 任务运行超过预期时间（如 10 分钟），系统应该如何处理？超时后是否 kill 进程？
-- **并发执行冲突**：如果两个指令同时尝试在同一个 Git 仓库上执行，如何避免 Git 冲突和文件锁定问题？
+- **并发执行冲突**：如果两个指令同时尝试在同一个 Git 仓库上执行，通过文件锁机制自动排队，第二个请求等待第一个完成（支持配置等待超时，默认 5 分钟），避免 Git 冲突和文件锁定问题
 - **Git 工作区不干净**：如果执行前 working tree 有未提交的修改，是否应该阻止执行、自动 stash、还是允许继续？
 - **Claude Code 未安装或版本不兼容**：如果系统中没有安装 `claude` 命令或版本过旧，如何给出友好的错误提示？
 - **大量输出处理**：如果 diff 非常大（如修改了上百个文件），如何避免内存溢出或输出截断？
 - **特殊字符和编码**：指令中包含特殊字符（引号、换行符、emoji）时，subprocess 调用是否正确处理？
 - **权限问题**：如果 Git 仓库路径没有写权限，Claude Code 执行失败时的错误信息是否清晰？
+
+## Clarifications
+
+### Session 2025-11-24
+
+- Q: 会话恢复功能（FR-008/FR-009）需要存储 session 数据，应该使用什么存储方案？ → A: SQLite 数据库
+- Q: FR-006 要求"将工具权限配置传递给 Claude Code"，但 Claude Code CLI 本身如何接收这些限制？ → A: 环境变量 + Hook 拦截
+- Q: FR-012 提到"如果有未提交的修改，根据配置决定是否阻止执行、自动 stash 或允许继续"，应该使用什么默认策略？ → A: 默认阻止，要求用户显式选择
+- Q: session 数据存储在 SQLite 后，应该设置多长的过期时间？过期的会话数据如何清理？ → A: 7 天自动过期，每日清理
+- Q: Edge Cases 中提到"并发执行冲突"，如果两个指令同时在同一仓库执行，应该如何处理？ → A: 文件锁机制，队列等待
 
 ## Requirements *(mandatory)*
 
@@ -90,16 +100,18 @@
 - **FR-003**: 系统必须在 Claude Code 执行完成后，从 Git 仓库获取生成的 diff（包括 staged、unstaged 和最近的 commit）
 - **FR-004**: 系统必须支持三种输出格式：纯文本（text）、JSON（json）、流式 JSON（stream-json）
 - **FR-005**: 系统必须返回结构化的执行结果，包含字段：instruction（原始指令）、status（成功/失败/超时）、diff（代码差异）、commit_hash（提交哈希）、files_changed（修改的文件列表）、stdout（标准输出）、stderr（错误输出）、execution_time（执行时长）
-- **FR-006**: 系统必须支持配置允许的工具列表（allowedTools）和禁止的工具列表（disallowedTools），并将配置传递给 Claude Code
+- **FR-006**: 系统必须支持配置允许的工具列表（allowedTools）和禁止的工具列表（disallowedTools），通过环境变量（如 CLAUDE_ALLOWED_TOOLS、CLAUDE_DISALLOWED_TOOLS）传递给 Claude Code 进程，并在系统层面实现 hook 机制拦截和验证工具调用，确保即使 Claude Code 不原生支持该配置也能强制执行限制
 - **FR-007**: 系统必须支持启用详细日志模式（verbose），记录 Claude Code 的详细执行过程
-- **FR-008**: 系统必须支持会话恢复（resume）功能，允许通过 session_id 继续之前的对话
-- **FR-009**: 系统必须支持继续最近对话（continue）功能，自动恢复最后一个会话
+- **FR-008**: 系统必须支持会话恢复（resume）功能，允许通过 session_id 继续之前的对话，会话数据使用 SQLite 数据库持久化存储（包括对话历史、执行上下文、时间戳等），会话默认 7 天后自动过期
+- **FR-009**: 系统必须支持继续最近对话（continue）功能，自动从 SQLite 数据库查询并恢复最后一个会话
+- **FR-016**: 系统必须实现会话清理机制，每日自动清理超过 7 天的过期会话数据，释放存储空间
 - **FR-010**: 系统必须处理 Claude Code 执行失败的情况，捕获异常并返回包含错误信息的结果（而不是崩溃）
 - **FR-011**: 系统必须支持执行超时机制，可配置最大执行时间（默认 10 分钟），超时后终止进程并返回超时状态
-- **FR-012**: 系统必须在执行前检查 Git 工作区状态，如果有未提交的修改，根据配置决定是否阻止执行、自动 stash 或允许继续
-- **FR-013**: 系统必须提供命令行接口（CLI），支持以下参数：--instruction（指令文本）、--output-format（输出格式）、--allowed-tools（允许工具）、--disallowed-tools（禁止工具）、--resume（会话 ID）、--continue（继续最近会话）、--verbose（详细日志）、--timeout（超时秒数）
+- **FR-012**: 系统必须在执行前检查 Git 工作区状态，如果有未提交的修改，默认阻止执行并返回错误提示，用户可通过 --dirty-worktree 参数显式指定行为：block（阻止，默认）、stash（自动保存到 stash）、allow（允许在脏工作区执行）
+- **FR-013**: 系统必须提供命令行接口（CLI），支持以下参数：--instruction（指令文本）、--output-format（输出格式）、--allowed-tools（允许工具）、--disallowed-tools（禁止工具）、--resume（会话 ID）、--continue（继续最近会话）、--verbose（详细日志）、--timeout（超时秒数）、--dirty-worktree（脏工作区处理策略：block/stash/allow）
 - **FR-014**: 系统必须提供核心库（Python 模块），可被其他程序导入使用，提供 execute_instruction() 函数
 - **FR-015**: 系统必须记录所有执行的指令、时间戳、执行结果到日志文件，用于审计和调试
+- **FR-017**: 系统必须实现基于文件锁的并发控制机制，当检测到同一 Git 仓库有正在执行的任务时，新请求自动进入等待队列串行执行，避免 Git 冲突，支持配置队列超时时间（默认 5 分钟），超时后返回错误
 
 ### Key Entities
 
