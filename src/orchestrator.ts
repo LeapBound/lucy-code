@@ -27,15 +27,18 @@ import { assertTransition, transition } from "./state-machine.js"
 import { TaskStore } from "./store.js"
 import { WorktreeManager } from "./worktree.js"
 import type { FeishuRequirement } from "./channels/feishu.js"
+import { FeishuConversationStore } from "./channels/feishu-conversation.js"
 
 export interface OrchestratorOptions {
   reportDir?: string
   intentClassifier?: IntentClassifier
+  conversationStore?: FeishuConversationStore
 }
 
 export class Orchestrator {
   private readonly reportDir: string
   private readonly intentClassifier: IntentClassifier
+  private readonly conversationStore: FeishuConversationStore
 
   constructor(
     private readonly store: TaskStore,
@@ -45,6 +48,7 @@ export class Orchestrator {
     this.reportDir = resolve(options.reportDir ?? ".orchestrator/reports")
     mkdirSync(this.reportDir, { recursive: true })
     this.intentClassifier = options.intentClassifier ?? new HybridIntentClassifier()
+    this.conversationStore = options.conversationStore ?? new FeishuConversationStore()
   }
 
   async createTask(input: {
@@ -278,13 +282,39 @@ export class Orchestrator {
     repoPath?: string
     worktreesRoot?: string
     branchPrefix?: string
-  }): Promise<{ task: Task; replyText: string }> {
+  }): Promise<{ task: Task | null; replyText: string }> {
+    // 1. Handle existing pending task (clarification/approval intent)
     const pendingTask = await this.findLatestWaitingApprovalTask(
       input.requirement.chatId,
       input.requirement.userId,
     )
 
     if (pendingTask) {
+      const openQuestions = openRequiredQuestions(pendingTask)
+      if (openQuestions.length > 0) {
+        const trimmed = input.requirement.text.trim()
+        if (this.isDraftCancel(trimmed)) {
+          const task = await this.store.get(pendingTask.taskId)
+          try {
+            transition(task, TaskState.CANCELLED, "state.change", "Task cancelled by user")
+          } catch {
+            task.state = TaskState.CANCELLED
+          }
+          recordTaskEvent(task, "task.cancelled", "Task cancelled during clarification")
+          await this.store.save(task)
+          return {
+            task,
+            replyText: `好的，我先把任务 ${task.taskId} 停掉了。如果要继续再告诉我。`,
+          }
+        }
+
+        const updated = await this.answerNextQuestion(
+          pendingTask.taskId,
+          input.requirement.text,
+        )
+        return { task: updated, replyText: this.buildNextInteractionPrompt(updated) }
+      }
+
       let task = await this.handleApprovalMessage(
         pendingTask.taskId,
         input.requirement.userId,
@@ -331,17 +361,106 @@ export class Orchestrator {
 
       return {
         task,
-        replyText: `我还无法确定是否批准任务 ${task.taskId}。请回复“同意/开始”或“取消/拒绝”。`,
+        replyText:
+          `我还不太确定你是想让我继续执行任务 ${task.taskId}，还是先暂停。\n` +
+          "你可以直接说：\n" +
+          "- 继续做（或：开始/同意/按这个来）\n" +
+          "- 先别做（或：取消/暂停）",
       }
     }
 
-    let task = await this.createTaskFromRequirement({
-      requirement: input.requirement,
-      repoName: input.repoName,
-      baseBranch: input.baseBranch,
-      worktreePath: input.worktreePath,
-    })
+    // 2. Handle explicit task creation intent (e.g. "需求: ...", "/task ...")
+    const explicitText = this.extractExplicitTaskText(input.requirement.text)
+    if (explicitText) {
+      const task = await this.createTaskFromRequirement({
+        requirement: { ...input.requirement, text: explicitText },
+        repoName: input.repoName,
+        baseBranch: input.baseBranch,
+        worktreePath: input.worktreePath,
+      })
+      return await this.afterTaskCreated(task, input)
+    }
 
+    // 3. Handle implicit conversation (draft storage + intent confirmation)
+    const draft = await this.conversationStore.getDraft(
+      input.requirement.chatId,
+      input.requirement.userId,
+    )
+
+    if (!draft) {
+      await this.conversationStore.setDraft({
+        chatId: input.requirement.chatId,
+        userId: input.requirement.userId,
+        messageId: input.requirement.messageId,
+        text: input.requirement.text,
+      })
+
+      return {
+        task: null,
+        replyText:
+          "我先不急着创建任务。\n\n" +
+          "你想让我把它当作开发任务推进吗？\n\n" +
+          `当前内容：\n${this.buildDraftPreview(input.requirement.text)}\n\n` +
+          "如果是：直接回复“好，做吧 / 继续 / 开始”，我就会创建任务并进入澄清。\n" +
+          "如果不是：回复“算了/不用/取消”就行，我不会创建任务。\n\n" +
+          "提示：你也可以用 `需求: ...` 直接明确这是任务。",
+      }
+    }
+
+    // 4. Process draft continuation/approval intent
+    const normalized = input.requirement.text.trim()
+    const decision = await this.intentClassifier.classify(normalized)
+
+    if (decision.intent === ApprovalIntent.APPROVE) {
+      await this.conversationStore.clearDraft(draft.chatId, draft.userId)
+      const task = await this.createTaskFromRequirement({
+        requirement: {
+          ...input.requirement,
+          messageId: draft.messageId,
+          text: draft.text,
+        },
+        repoName: input.repoName,
+        baseBranch: input.baseBranch,
+        worktreePath: input.worktreePath,
+      })
+      return await this.afterTaskCreated(task, input)
+    }
+
+    if (decision.intent === ApprovalIntent.REJECT || this.isDraftCancel(normalized)) {
+      await this.conversationStore.clearDraft(draft.chatId, draft.userId)
+      return { task: null, replyText: "好的，我不创建任务。" }
+    }
+
+    await this.conversationStore.appendToDraft(
+      draft.chatId,
+      draft.userId,
+      input.requirement.messageId,
+      input.requirement.text,
+    )
+    return {
+      task: null,
+      replyText:
+        "收到，我把这条也记到草稿里了（仍未创建任务）。\n\n" +
+        "如果你希望我开始做：直接回“开始/继续/就按这个做”就行。\n" +
+        "如果你只是想问问：回“算了/不用/取消”就行。",
+    }
+  }
+
+  private async afterTaskCreated(
+    task: Task,
+    input: {
+      requirement: FeishuRequirement
+      repoName: string
+      baseBranch?: string
+      worktreePath?: string
+      autoClarify?: boolean
+      autoRunOnApprove?: boolean
+      autoProvisionWorktree?: boolean
+      repoPath?: string
+      worktreesRoot?: string
+      branchPrefix?: string
+    },
+  ): Promise<{ task: Task; replyText: string }> {
     if (input.autoProvisionWorktree && input.repoPath && !task.repo.branch) {
       try {
         task = await this.provisionWorktree({
@@ -360,13 +479,96 @@ export class Orchestrator {
 
     if (input.autoClarify !== false) {
       task = await this.clarifyTask(task.taskId)
-      return { task, replyText: this.buildApprovalPrompt(task) }
+      return { task, replyText: this.buildNextInteractionPrompt(task) }
     }
 
     return {
       task,
       replyText: `任务 ${task.taskId} 已创建。下一步请运行 clarify。`,
     }
+  }
+
+  private buildNextInteractionPrompt(task: Task): string {
+    const summary = task.artifacts.clarifySummary ?? "已完成需求澄清。"
+    const openQuestions = openRequiredQuestions(task)
+    if (openQuestions.length > 0) {
+      const question = openQuestions[0]
+      return (
+        `好的，任务 ${task.taskId} 已创建并完成澄清。\n` +
+        `摘要：${summary}\n\n` +
+        `有个细节我想跟你确认一下（${question.id}）：${question.question}\n` +
+        "你直接回复你的想法/选择就行。"
+      )
+    }
+
+    return (
+      `好的，任务 ${task.taskId} 已创建并完成澄清。\n` +
+      `摘要：${summary}\n\n` +
+      "接下来我是打算开始写代码跑测试，不过如果你想先暂停也可以。\n" +
+      "你直接告诉我“继续做/开始”或“先别做/暂停”就行。"
+    )
+  }
+
+  private async answerNextQuestion(taskId: string, answer: string): Promise<Task> {
+    const task = await this.store.get(taskId)
+    if (!task.plan) {
+      return task
+    }
+
+    const open = openRequiredQuestions(task)
+    if (open.length === 0) {
+      return task
+    }
+
+    const questionId = open[0].id
+    const updatedQuestions = task.plan.questions.map((question) => {
+      if (question.id !== questionId) {
+        return question
+      }
+      return {
+        ...question,
+        status: QuestionStatus.ANSWERED,
+        answer: answer.trim(),
+      }
+    })
+    task.plan = { ...task.plan, questions: updatedQuestions }
+    recordTaskEvent(task, "plan.question.answered", "Plan question answered", {
+      id: questionId,
+    })
+    await this.store.save(task)
+    return task
+  }
+
+  private extractExplicitTaskText(text: string): string | null {
+    const trimmed = text.trim()
+    const patterns = [/^需求\s*[:：]\s*/i, /^任务\s*[:：]\s*/i, /^\/task\s+/i, /^\/new\s+/i]
+    for (const pattern of patterns) {
+      if (pattern.test(trimmed)) {
+        return trimmed.replace(pattern, "").trim()
+      }
+    }
+    return null
+  }
+
+  private buildDraftPreview(text: string): string {
+    const trimmed = text.trim()
+    if (trimmed.length <= 280) {
+      return trimmed
+    }
+    return `${trimmed.slice(0, 260)}...`
+  }
+
+  private isDraftCancel(text: string): boolean {
+    const normalized = text.trim().toLowerCase()
+    if (!normalized) {
+      return false
+    }
+    const exact = new Set(["取消", "/cancel", "算了", "不用", "不是", "no", "n", "先别", "暂停"])
+    if (exact.has(normalized)) {
+      return true
+    }
+    const patterns = [/先别做/i, /不要做/i, /停一下/i, /先暂停/i]
+    return patterns.some((pattern) => pattern.test(normalized))
   }
 
   private async findLatestWaitingApprovalTask(chatId: string, userId: string): Promise<Task | null> {
@@ -381,24 +583,6 @@ export class Orchestrator {
       return null
     }
     return candidates.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0] ?? null
-  }
-
-  private buildApprovalPrompt(task: Task): string {
-    const lines: string[] = [
-      `任务 ${task.taskId} 已创建并完成澄清。`,
-      `摘要：${task.artifacts.clarifySummary ?? "已完成需求澄清。"}`,
-    ]
-
-    const openQuestions = openRequiredQuestions(task)
-    if (openQuestions.length > 0) {
-      lines.push("待确认问题：")
-      for (const question of openQuestions) {
-        lines.push(`- [${question.id}] ${question.question}`)
-      }
-    }
-
-    lines.push("请回复“同意/开始”批准执行，或回复“取消/拒绝”。")
-    return lines.join("\n")
   }
 
   private async writeTestReport(

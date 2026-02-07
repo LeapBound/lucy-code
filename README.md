@@ -75,6 +75,11 @@ npm run dev -- serve-feishu-longconn \
   --send-reply
 ```
 
+Interaction note:
+
+- If you just ask a question, the bot will not immediately create a task.
+- Reply with a natural confirmation (e.g. "好，帮我做" / "开始"), or prefix your message with `需求:` to create a task explicitly.
+
 ## OpenCode Drivers
 
 - Default: `sdk` (official `@opencode-ai/sdk`)

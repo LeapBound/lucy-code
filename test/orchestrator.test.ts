@@ -7,6 +7,7 @@ import { Orchestrator } from "../src/orchestrator.js"
 import { TaskStore } from "../src/store.js"
 import { StepStatus, StepType, TaskState, type Task } from "../src/models.js"
 import type { BuildExecutionResult, ClarifyResult, OpenCodeClient, TestExecutionResult } from "../src/adapters/opencode.js"
+import { FeishuConversationStore } from "../src/channels/feishu-conversation.js"
 
 class FakeOpenCodeClient implements OpenCodeClient {
   constructor(private readonly testExitCode = 0) {}
@@ -72,6 +73,7 @@ async function newHarness(testExitCode = 0) {
   const store = new TaskStore(join(root, "tasks"))
   const orchestrator = new Orchestrator(store, new FakeOpenCodeClient(testExitCode), {
     reportDir: join(root, "reports"),
+    conversationStore: new FeishuConversationStore(join(root, "conversations.json")),
   })
   return { orchestrator, store }
 }
@@ -107,5 +109,56 @@ describe("orchestrator", () => {
     await orchestrator.approveTask(task.taskId, "u")
     task = await orchestrator.runTask(task.taskId)
     expect(task.state).toBe(TaskState.FAILED)
+  })
+
+  test("does not create task immediately for ambiguous message", async () => {
+    const { orchestrator, store } = await newHarness(0)
+    const result = await orchestrator.processFeishuMessage({
+      requirement: {
+        userId: "ou_1",
+        chatId: "oc_1",
+        messageId: "om_1",
+        text: "这个要怎么做？",
+      },
+      repoName: "repo",
+      autoClarify: true,
+    })
+
+    expect(result.task).toBeNull()
+    expect(result.replyText).toMatch(/不急着创建任务/)
+
+    const list = await store.list()
+    expect(list.length).toBe(0)
+  })
+
+  test("creates task when user confirms draft", async () => {
+    const { orchestrator, store } = await newHarness(0)
+    await orchestrator.processFeishuMessage({
+      requirement: {
+        userId: "ou_1",
+        chatId: "oc_1",
+        messageId: "om_1",
+        text: "我想加一个新的命令",
+      },
+      repoName: "repo",
+      autoClarify: false,
+    })
+
+    const confirmed = await orchestrator.processFeishuMessage({
+      requirement: {
+        userId: "ou_1",
+        chatId: "oc_1",
+        messageId: "om_2",
+        text: "好，帮我做",
+      },
+      repoName: "repo",
+      autoClarify: false,
+    })
+
+    expect(confirmed.task).not.toBeNull()
+    expect(confirmed.task?.state).toBe(TaskState.NEW)
+
+    const list = await store.list()
+    expect(list.length).toBe(1)
   })
 })

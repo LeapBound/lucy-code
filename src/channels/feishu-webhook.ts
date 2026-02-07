@@ -159,6 +159,16 @@ export class FeishuWebhookProcessor {
       }
 
       await this.processedStore.add(requirement.messageId)
+      if (!task) {
+        return {
+          statusCode: 200,
+          payload: {
+            status: "draft",
+            replySent,
+          },
+        }
+      }
+
       return {
         statusCode: 200,
         payload: {

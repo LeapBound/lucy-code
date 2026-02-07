@@ -32,6 +32,10 @@ export class RuleBasedIntentClassifier implements IntentClassifier {
     /开始吧/i,
     /可以开始/i,
     /开干/i,
+    /好，帮我做/i,
+    /继续做/i,
+    /开始/i,
+    /继续/i,
   ]
 
   private readonly rejectPatterns = [

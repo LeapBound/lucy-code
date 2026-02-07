@@ -96,12 +96,10 @@ export class FeishuLongConnProcessor {
     }
 
     await this.processedStore.add(messageId)
-    return {
-      status: "ok",
-      taskId: task.taskId,
-      taskState: task.state,
-      replySent,
+    if (!task) {
+      return { status: "draft", replySent }
     }
+    return { status: "ok", taskId: task.taskId, taskState: task.state, replySent }
   }
 
   private extractMessageText(messageType: string, content: unknown): string {

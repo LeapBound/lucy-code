@@ -236,7 +236,18 @@ export async function main(): Promise<void> {
         replySent = true
       }
 
+      if (!task) {
+        printJson({
+          status: "draft",
+          chatId: requirement.chatId,
+          replyText,
+          replySent,
+        })
+        return
+      }
+
       printJson({
+        status: "ok",
         taskId: task.taskId,
         state: task.state,
         chatId: requirement.chatId,
