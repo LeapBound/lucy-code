@@ -1,5 +1,0 @@
-        # --- Step 0: Early validation ---
-        # Check Claude Code availability early (before lock)
-        if shutil.which("claude") is None:
-            from .exceptions import ClaudeCodeNotFoundError
-            raise ClaudeCodeNotFoundError()

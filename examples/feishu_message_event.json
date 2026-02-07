@@ -1,0 +1,18 @@
+{
+  "schema": "2.0",
+  "header": {
+    "event_type": "im.message.receive_v1"
+  },
+  "event": {
+    "sender": {
+      "sender_id": {
+        "open_id": "ou_xxx"
+      }
+    },
+    "message": {
+      "message_id": "om_xxx",
+      "chat_id": "oc_xxx",
+      "content": "{\"text\":\"请为任务调度系统增加重试策略\"}"
+    }
+  }
+}

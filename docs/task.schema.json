@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lucy-orchestrator.local/schemas/task.schema.json",
+  "title": "Task",
+  "type": "object",
+  "required": ["task_id", "title", "description", "source", "repo", "state", "approval", "execution", "artifacts", "timestamps"],
+  "properties": {
+    "task_id": {"type": "string", "minLength": 1},
+    "title": {"type": "string"},
+    "description": {"type": "string"},
+    "source": {
+      "type": "object",
+      "required": ["type", "user_id", "chat_id", "message_id"],
+      "properties": {
+        "type": {"type": "string"},
+        "user_id": {"type": "string"},
+        "chat_id": {"type": "string"},
+        "message_id": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "repo": {
+      "type": "object",
+      "required": ["name", "base_branch"],
+      "properties": {
+        "name": {"type": "string"},
+        "base_branch": {"type": "string"},
+        "worktree_path": {"type": ["string", "null"]},
+        "branch": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "state": {
+      "type": "string",
+      "enum": ["NEW", "CLARIFYING", "WAIT_APPROVAL", "RUNNING", "TESTING", "DONE", "FAILED", "CANCELLED"]
+    },
+    "approval": {
+      "type": "object",
+      "required": ["required", "approved_by", "approved_at"],
+      "properties": {
+        "required": {"type": "boolean"},
+        "approved_by": {"type": ["string", "null"]},
+        "approved_at": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "plan": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "./plan.schema.json"}
+      ]
+    },
+    "execution": {
+      "type": "object",
+      "required": ["attempt", "max_attempts", "last_error"],
+      "properties": {
+        "attempt": {"type": "integer", "minimum": 0},
+        "max_attempts": {"type": "integer", "minimum": 1},
+        "last_error": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "artifacts": {
+      "type": "object",
+      "required": ["clarify_summary", "diff_path", "test_report_path", "pr_url", "changed_files", "test_results"],
+      "properties": {
+        "clarify_summary": {"type": ["string", "null"]},
+        "diff_path": {"type": ["string", "null"]},
+        "test_report_path": {"type": ["string", "null"]},
+        "pr_url": {"type": ["string", "null"]},
+        "changed_files": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "test_results": {
+          "type": "array",
+          "items": {"type": "object"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "event_log": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["timestamp", "event_type", "message", "payload"],
+        "properties": {
+          "timestamp": {"type": "string"},
+          "event_type": {"type": "string"},
+          "message": {"type": "string"},
+          "payload": {"type": "object"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "timestamps": {
+      "type": "object",
+      "required": ["created_at", "updated_at"],
+      "properties": {
+        "created_at": {"type": "string"},
+        "updated_at": {"type": "string"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
