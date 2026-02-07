@@ -1,73 +1,12 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-pip-wheel-metadata/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-
-# Testing
 .pytest_cache/
-.coverage
-.coverage.*
-htmlcov/
-.tox/
-.nox/
-coverage.xml
-*.cover
-.hypothesis/
-
-# IDEs
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-.project
-.pydevproject
-
-# Environment
-.env
-.venv
-env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
 venv/
-ENV/
-env.bak/
-venv.bak/
-
-# Package-specific
-packages/cc-executor/__pycache__/
-packages/cc-executor/*.pyc
-packages/cc-executor/.pytest_cache/
-packages/cc-executor/dist/
-packages/cc-executor/build/
-packages/cc-executor/*.egg-info/
-
-# SQLite databases (development)
-*.db
-*.sqlite
-*.sqlite3
-
-# Logs
-*.log
-
-# OS
-.DS_Store
-Thumbs.db
+build/
+dist/
+*.egg-info/
+.orchestrator/
+.ruff_cache/
