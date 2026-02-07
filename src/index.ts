@@ -1,5 +1,6 @@
 export * from "./adapters/opencode.js"
 export * from "./channels/feishu.js"
+export * from "./channels/feishu-longconn.js"
 export * from "./channels/feishu-webhook.js"
 export * from "./config.js"
 export * from "./errors.js"

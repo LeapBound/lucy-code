@@ -12,6 +12,11 @@ import {
   serveFeishuWebhook,
 } from "./channels/feishu-webhook.js"
 import {
+  FeishuLongConnProcessor,
+  FeishuLongConnSettings,
+  serveFeishuLongConnection,
+} from "./channels/feishu-longconn.js"
+import {
   DEFAULT_CONFIG_PATH,
   initConfig,
   loadConfig,
@@ -310,6 +315,76 @@ export async function main(): Promise<void> {
       await serveFeishuWebhook(processor, {
         host: commandOptions.host,
         port: Number(commandOptions.port),
+      })
+    })
+
+  program
+    .command("serve-feishu-longconn")
+    .option("--repo-name <name>", "Repo name", "repository")
+    .option("--base-branch <name>", "Base branch", "main")
+    .option("--worktree-path <path>", "Worktree path", process.cwd())
+    .option("--repo-path <path>", "Git repository path", process.cwd())
+    .option("--worktrees-root <path>", "Worktrees root path")
+    .option("--branch-prefix <prefix>", "Task branch prefix", "agent")
+    .option("--auto-provision-worktree", "Auto create task worktree", false)
+    .option("--no-auto-clarify", "Skip clarify step")
+    .option("--auto-run-on-approve", "Auto run task when approved", false)
+    .option("--send-reply", "Send Feishu replies", false)
+    .option("--allow-from [ids...]", "Allowed sender open_id list")
+    .option(
+      "--processed-store <path>",
+      "Processed message dedupe store",
+      ".orchestrator/feishu_seen_messages.json",
+    )
+    .action(async (commandOptions) => {
+      const options = normalizeOptions(program.opts())
+      const orchestrator = buildOrchestrator(options)
+      const config = await loadConfig(options.config, true)
+      const credentials = await loadFeishuCredentialsFromConfig(options.config)
+
+      const allowFrom =
+        Array.isArray(commandOptions.allowFrom) && commandOptions.allowFrom.length > 0
+          ? commandOptions.allowFrom.map(String)
+          : config.channels.feishu.allowFrom
+
+      const settings: FeishuLongConnSettings = {
+        repoName: commandOptions.repoName,
+        baseBranch: commandOptions.baseBranch,
+        worktreePath: commandOptions.worktreePath,
+        autoClarify: commandOptions.autoClarify,
+        autoRunOnApprove: commandOptions.autoRunOnApprove,
+        autoProvisionWorktree: commandOptions.autoProvisionWorktree,
+        repoPath: commandOptions.repoPath,
+        worktreesRoot: commandOptions.worktreesRoot,
+        branchPrefix: commandOptions.branchPrefix,
+        sendReply: commandOptions.sendReply,
+        allowFrom,
+      }
+
+      const messenger = commandOptions.sendReply
+        ? new FeishuMessenger(credentials.appId, credentials.appSecret)
+        : undefined
+
+      const processor = new FeishuLongConnProcessor(
+        orchestrator,
+        settings,
+        messenger,
+        new ProcessedMessageStore(commandOptions.processedStore),
+      )
+
+      printJson({
+        status: "starting",
+        mode: "longconn",
+        sendReply: commandOptions.sendReply,
+        autoProvisionWorktree: commandOptions.autoProvisionWorktree,
+      })
+
+      await serveFeishuLongConnection({
+        appId: credentials.appId,
+        appSecret: credentials.appSecret,
+        encryptKey: config.channels.feishu.encryptKey || undefined,
+        verificationToken: config.channels.feishu.verificationToken || undefined,
+        processor,
       })
     })
 

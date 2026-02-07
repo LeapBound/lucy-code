@@ -4,7 +4,7 @@
 
 - Control plane: `Orchestrator` + `TaskStore` + `state-machine` + `policy`.
 - Execution plane: `OpenCodeRuntimeClient` (SDK first, CLI fallback).
-- Human interface: Feishu channel + webhook server.
+- Human interface: Feishu channel + webhook server + long-connection runtime.
 
 ## Main Flow
 

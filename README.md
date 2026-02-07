@@ -8,7 +8,7 @@ Feishu-first coding orchestrator built around OpenCode SDK.
 - Runs explicit state machine: `NEW -> CLARIFYING -> WAIT_APPROVAL -> RUNNING -> TESTING -> DONE/FAILED`.
 - Uses OpenCode for clarify/build/test execution.
 - Supports task-level git worktree isolation and optional Docker execution.
-- Supports webhook callback mode with message dedupe and token validation.
+- Supports both webhook callback mode and long-connection (WebSocket) mode.
 
 ## Quickstart
 
@@ -59,6 +59,16 @@ Webhook server:
 npm run dev -- serve-feishu-webhook \
   --host 0.0.0.0 \
   --port 18791 \
+  --repo-name lucy-code \
+  --auto-provision-worktree \
+  --repo-path /path/to/repo \
+  --send-reply
+```
+
+Long-connection server (no public callback URL needed):
+
+```bash
+npm run dev -- serve-feishu-longconn \
   --repo-name lucy-code \
   --auto-provision-worktree \
   --repo-path /path/to/repo \
