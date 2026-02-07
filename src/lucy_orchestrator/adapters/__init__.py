@@ -10,14 +10,12 @@ from .opencode import (
     ClarifyResult,
     OpenCodeCLIClient,
     OpenCodeClient,
-    StubOpenCodeClient,
     TestExecutionResult,
 )
 
 __all__ = [
     "OpenCodeClient",
     "OpenCodeCLIClient",
-    "StubOpenCodeClient",
     "ClarifyResult",
     "BuildExecutionResult",
     "TestExecutionResult",

@@ -25,10 +25,11 @@
 6. Execute test steps (`TESTING`) and write structured report.
 7. Finish at `DONE` or `FAILED`.
 
-## OpenCode Adapter Modes
+## OpenCode Adapter
 
-- `StubOpenCodeClient`: deterministic local development mode.
-- `OpenCodeCLIClient`: runs `opencode run --agent <plan|build> --format json`, parses JSONL events, and stores raw execution logs under `.orchestrator/artifacts`.
+- `OpenCodeCLIClient` uses SDK driver by default through `scripts/opencode_sdk_bridge.mjs` (`@opencode-ai/sdk`).
+- SDK flow: create session -> prompt with `agent` + text part -> parse `parts` (`text`, `step-finish`) into text/usage metrics.
+- CLI fallback remains available with `--opencode-driver cli` and keeps Docker-mounted execution behavior.
 
 ## State Guards
 

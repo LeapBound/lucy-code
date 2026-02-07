@@ -1,0 +1,10 @@
+{
+  "name": "lucy-orchestrator-sdk-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Node bridge for OpenCode JS SDK",
+  "type": "module",
+  "dependencies": {
+    "@opencode-ai/sdk": "^1.1.53"
+  }
+}

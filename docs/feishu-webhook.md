@@ -10,6 +10,7 @@ This project supports two Feishu ingestion modes:
 ```bash
 lucy-orchestrator config-init --from-nanobot
 lucy-orchestrator config-show
+npm install
 ```
 
 ## Start Webhook Server
@@ -33,4 +34,6 @@ Runtime behavior:
 
 ## Docker + Worktree Execution
 
-When running with `--opencode-mode cli --opencode-use-docker`, OpenCode and tests execute in Docker with only task worktree mounted at `/workspace`.
+When running with `--opencode-use-docker`, OpenCode and tests execute in Docker with only task worktree mounted at `/workspace`.
+
+If you need to bypass SDK bridge for agent execution, add `--opencode-driver cli`.

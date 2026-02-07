@@ -129,6 +129,92 @@ class TestOpenCodeAdapter(unittest.TestCase):
             self.assertIn("nanobot-opencode", args[0])
             self.assertFalse(kwargs["shell"])
 
+    @patch("lucy_orchestrator.adapters.opencode.subprocess.run")
+    def test_run_agent_uses_sdk_bridge_by_default(self, mock_run) -> None:
+        sdk_stdout = json.dumps(
+            {
+                "ok": True,
+                "text": "sdk output",
+                "usage": {
+                    "prompt_tokens": 10,
+                    "completion_tokens": 5,
+                    "total_tokens": 15,
+                },
+                "parts": [
+                    {"type": "text", "text": "sdk output"},
+                    {
+                        "type": "step-finish",
+                        "tokens": {
+                            "input": 10,
+                            "output": 5,
+                            "reasoning": 0,
+                            "cache": {"read": 0, "write": 0},
+                        },
+                    },
+                ],
+            }
+        )
+        mock_run.return_value = SimpleNamespace(
+            returncode=0, stdout=sdk_stdout, stderr=""
+        )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            workspace = Path(tmp_dir)
+            sdk_script = workspace / "opencode_sdk_bridge.mjs"
+            sdk_script.write_text("// noop", encoding="utf-8")
+
+            client = OpenCodeCLIClient(
+                artifact_root=workspace / "artifacts",
+                workspace=workspace,
+                driver="sdk",
+                sdk_script=sdk_script,
+            )
+
+            result = client._run_agent(
+                agent="plan",
+                prompt="hello",
+                task_id="task_1",
+                workspace=str(workspace),
+            )
+
+            self.assertTrue(result.success)
+            self.assertEqual(result.text, "sdk output")
+            self.assertEqual(result.usage.get("total_tokens"), 15)
+            args, kwargs = mock_run.call_args
+            self.assertEqual(args[0][0], "node")
+            self.assertIn("opencode_sdk_bridge.mjs", args[0][1])
+            self.assertIn('"agent": "plan"', kwargs["input"])
+
+    @patch("lucy_orchestrator.adapters.opencode.subprocess.run")
+    def test_run_agent_cli_driver_uses_opencode_command(self, mock_run) -> None:
+        raw = "\n".join(
+            [
+                '{"type":"text","part":{"text":"hello"}}',
+                '{"type":"step_finish","part":{"tokens":{"input_tokens":1,"output_tokens":2}}}',
+            ]
+        )
+        mock_run.return_value = SimpleNamespace(returncode=0, stdout=raw, stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            workspace = Path(tmp_dir)
+            client = OpenCodeCLIClient(
+                artifact_root=workspace / "artifacts",
+                workspace=workspace,
+                driver="cli",
+                command="opencode",
+            )
+
+            result = client._run_agent(
+                agent="build",
+                prompt="do work",
+                task_id="task_1",
+                workspace=str(workspace),
+            )
+
+            self.assertTrue(result.success)
+            args, _ = mock_run.call_args
+            self.assertEqual(args[0][:3], ["opencode", "run", "--agent"])
+
 
 if __name__ == "__main__":
     unittest.main()

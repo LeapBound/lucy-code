@@ -50,10 +50,11 @@ tests/
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .
+npm install
 PYTHONPATH=src python -m unittest discover -s tests -p 'test_*.py'
 ```
 
-Create and execute one task in local stub mode:
+Create and execute one task:
 
 ```bash
 lucy-orchestrator create \
@@ -101,18 +102,23 @@ lucy-orchestrator serve-feishu-webhook \
   --send-reply
 ```
 
-Run with real OpenCode CLI mode:
+Run with OpenCode SDK mode (default):
 
 ```bash
-lucy-orchestrator --opencode-mode cli --workspace /path/to/worktree clarify --task-id <TASK_ID>
-lucy-orchestrator --opencode-mode cli --workspace /path/to/worktree run --task-id <TASK_ID>
+lucy-orchestrator --workspace /path/to/worktree clarify --task-id <TASK_ID>
+lucy-orchestrator --workspace /path/to/worktree run --task-id <TASK_ID>
+```
+
+Fallback to raw CLI driver if needed:
+
+```bash
+lucy-orchestrator --opencode-driver cli --workspace /path/to/worktree run --task-id <TASK_ID>
 ```
 
 Run OpenCode and tests in Docker with task worktree mounted:
 
 ```bash
 lucy-orchestrator \
-  --opencode-mode cli \
   --opencode-use-docker \
   --opencode-docker-image nanobot-opencode \
   --workspace /path/to/worktree \
@@ -124,6 +130,7 @@ lucy-orchestrator \
 - `channels/feishu.py` handles Feishu event parsing and message sending.
 - `channels/feishu_webhook.py` provides webhook processor/server with dedupe and verification token support.
 - `config.py` manages Lucy local config at `~/.lucy-orchestrator/config.json`.
-- `adapters/opencode.py` includes both a `StubOpenCodeClient` and `OpenCodeCLIClient`.
-- `OpenCodeCLIClient` parses JSONL events, extracts usage/errors, mounts worktree into Docker when enabled, and writes raw agent logs to `.orchestrator/artifacts`.
+- `scripts/opencode_sdk_bridge.mjs` integrates official `@opencode-ai/sdk` for agent execution.
+- `adapters/opencode.py` uses SDK driver by default, with optional CLI fallback (`--opencode-driver cli`).
+- Docker execution remains available for test commands and CLI fallback mode.
 - `intent.py` supports rules + optional LLM intent classification (`approve/reject/clarify/unknown`) for natural-language approval messages.

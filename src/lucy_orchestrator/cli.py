@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from .adapters.opencode import OpenCodeCLIClient, StubOpenCodeClient
+from .adapters.opencode import OpenCodeCLIClient
 from .channels.feishu import FeishuMessenger, parse_requirement_event
 from .channels.feishu_webhook import (
     FeishuWebhookProcessor,
@@ -34,19 +34,23 @@ def _print_json(payload: dict[str, object]) -> None:
 
 def _build_orchestrator(args: argparse.Namespace) -> Orchestrator:
     store = TaskStore(args.store_dir)
-    if args.opencode_mode == "cli":
-        opencode_client = OpenCodeCLIClient(
-            artifact_root=args.artifact_dir,
-            command=args.opencode_command,
-            use_docker=args.opencode_use_docker,
-            docker_image=args.opencode_docker_image,
-            workspace=args.workspace,
-            timeout=args.opencode_timeout,
-            plan_agent=args.opencode_plan_agent,
-            build_agent=args.opencode_build_agent,
-        )
-    else:
-        opencode_client = StubOpenCodeClient(artifact_root=args.artifact_dir)
+    opencode_client = OpenCodeCLIClient(
+        artifact_root=args.artifact_dir,
+        driver=args.opencode_driver,
+        command=args.opencode_command,
+        use_docker=args.opencode_use_docker,
+        docker_image=args.opencode_docker_image,
+        workspace=args.workspace,
+        timeout=args.opencode_timeout,
+        plan_agent=args.opencode_plan_agent,
+        build_agent=args.opencode_build_agent,
+        node_command=args.opencode_node_command,
+        sdk_script=args.opencode_sdk_script,
+        sdk_base_url=args.opencode_sdk_base_url,
+        sdk_hostname=args.opencode_sdk_hostname,
+        sdk_port=args.opencode_sdk_port,
+        sdk_timeout_ms=args.opencode_sdk_timeout_ms,
+    )
 
     intent_classifier = _build_intent_classifier(args)
 
@@ -61,7 +65,7 @@ def _build_orchestrator(args: argparse.Namespace) -> Orchestrator:
 def _build_intent_classifier(args: argparse.Namespace):
     rule_classifier = RuleBasedIntentClassifier()
     llm_classifier = None
-    if args.intent_mode in {"llm", "hybrid"} and args.opencode_mode == "cli":
+    if args.intent_mode in {"llm", "hybrid"}:
         llm_classifier = OpenCodeIntentClassifier(
             command=args.opencode_command,
             timeout=args.opencode_timeout,
@@ -321,7 +325,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--artifact-dir", default=".orchestrator/artifacts")
     parser.add_argument("--report-dir", default=".orchestrator/reports")
     parser.add_argument("--workspace", default=str(Path.cwd()))
-    parser.add_argument("--opencode-mode", choices=["stub", "cli"], default="stub")
+    parser.add_argument("--opencode-driver", choices=["sdk", "cli"], default="sdk")
+    parser.add_argument("--opencode-node-command", default="node")
+    parser.add_argument(
+        "--opencode-sdk-script",
+        default="scripts/opencode_sdk_bridge.mjs",
+    )
+    parser.add_argument("--opencode-sdk-base-url")
+    parser.add_argument("--opencode-sdk-hostname", default="127.0.0.1")
+    parser.add_argument("--opencode-sdk-port", type=int, default=0)
+    parser.add_argument("--opencode-sdk-timeout-ms", type=int, default=5000)
     parser.add_argument("--opencode-command", default="opencode")
     parser.add_argument("--opencode-timeout", type=int, default=900)
     parser.add_argument("--opencode-use-docker", action="store_true")
@@ -329,7 +342,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--opencode-plan-agent", default="plan")
     parser.add_argument("--opencode-build-agent", default="build")
     parser.add_argument(
-        "--intent-mode", choices=["rules", "llm", "hybrid"], default="hybrid"
+        "--intent-mode", choices=["rules", "llm", "hybrid"], default="rules"
     )
     parser.add_argument("--intent-agent", default="plan")
     parser.add_argument("--intent-confidence-threshold", type=float, default=0.8)

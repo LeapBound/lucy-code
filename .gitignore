@@ -10,3 +10,5 @@ dist/
 *.egg-info/
 .orchestrator/
 .ruff_cache/
+node_modules/
+npm-debug.log*
