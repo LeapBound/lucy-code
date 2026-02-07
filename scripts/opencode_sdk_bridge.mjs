@@ -14,152 +14,92 @@ async function readStdin() {
   })
 }
 
-function sanitizeUsage(parts) {
-  let promptTokens = 0
-  let completionTokens = 0
+function collectText(parts) {
+  return parts
+    .filter((part) => part?.type === "text" && typeof part.text === "string")
+    .map((part) => part.text)
+    .join("")
+    .trim()
+}
+
+function collectUsage(parts) {
+  let prompt = 0
+  let completion = 0
 
   for (const part of parts) {
-    if (!part || part.type !== "step-finish") {
+    if (part?.type !== "step-finish") {
       continue
     }
     const tokens = part.tokens || {}
-    const input = Number(tokens.input || 0)
-    const output = Number(tokens.output || 0)
-    const reasoning = Number(tokens.reasoning || 0)
-    const cacheRead = Number(tokens.cache?.read || 0)
-    const cacheWrite = Number(tokens.cache?.write || 0)
-
-    promptTokens += input + cacheRead + cacheWrite
-    completionTokens += output + reasoning
+    const cache = tokens.cache || {}
+    prompt += Number(tokens.input || 0) + Number(cache.read || 0) + Number(cache.write || 0)
+    completion += Number(tokens.output || 0) + Number(tokens.reasoning || 0)
   }
 
   return {
-    prompt_tokens: promptTokens,
-    completion_tokens: completionTokens,
-    total_tokens: promptTokens + completionTokens,
+    prompt_tokens: prompt,
+    completion_tokens: completion,
+    total_tokens: prompt + completion,
   }
-}
-
-function collectText(parts) {
-  const chunks = []
-  for (const part of parts) {
-    if (part && part.type === "text" && typeof part.text === "string") {
-      chunks.push(part.text)
-    }
-  }
-  return chunks.join("").trim()
-}
-
-function responseError(response) {
-  if (!response || !response.error) {
-    return "Unknown SDK response error"
-  }
-
-  const error = response.error
-  if (typeof error === "string") {
-    return error
-  }
-  if (typeof error.detail === "string") {
-    return error.detail
-  }
-  if (typeof error.message === "string") {
-    return error.message
-  }
-  return JSON.stringify(error)
 }
 
 async function main() {
   let payload
   try {
-    const raw = await readStdin()
-    payload = JSON.parse(raw || "{}")
+    payload = JSON.parse((await readStdin()) || "{}")
   } catch (error) {
-    process.stdout.write(
-      JSON.stringify(
-        {
-          ok: false,
-          error: "Invalid JSON payload",
-          details: String(error),
-        },
-        null,
-        2,
-      ),
-    )
+    process.stdout.write(JSON.stringify({ ok: false, error: "invalid payload", details: String(error) }, null, 2))
     process.exit(1)
   }
 
   if (!payload.agent || !payload.prompt || !payload.workspace) {
-    process.stdout.write(
-      JSON.stringify(
-        {
-          ok: false,
-          error: "Missing required payload fields: agent, prompt, workspace",
-        },
-        null,
-        2,
-      ),
-    )
+    process.stdout.write(JSON.stringify({ ok: false, error: "missing required fields" }, null, 2))
     process.exit(1)
   }
 
   let server = null
-  let client
   try {
-    if (payload.baseUrl) {
-      client = createOpencodeClient({ baseUrl: payload.baseUrl })
-    } else {
-      const started = await createOpencode({
-        hostname: payload.hostname || "127.0.0.1",
-        port: Number(payload.port ?? 4096),
-        timeout: Number(payload.timeoutMs ?? 5000),
-      })
-      client = started.client
-      server = started.server
-    }
+    const client = payload.baseUrl
+      ? createOpencodeClient({ baseUrl: payload.baseUrl })
+      : await (async () => {
+          const started = await createOpencode({
+            hostname: payload.hostname || "127.0.0.1",
+            port: Number(payload.port ?? 4096),
+            timeout: Number(payload.timeoutMs ?? 5000),
+          })
+          server = started.server
+          return started.client
+        })()
 
-    const createResult = await client.session.create({
-      body: {
-        title: payload.sessionTitle || `lucy-${payload.agent}`,
-      },
-      query: {
-        directory: payload.workspace,
-      },
+    const session = await client.session.create({
+      body: { title: payload.sessionTitle || `lucy-${payload.agent}` },
+      query: { directory: payload.workspace },
     })
-    if (createResult.error || !createResult.data?.id) {
-      throw new Error(`Failed to create session: ${responseError(createResult)}`)
+    if (session.error || !session.data?.id) {
+      throw new Error(`create session failed: ${JSON.stringify(session.error)}`)
     }
 
-    const sessionID = createResult.data.id
-    const promptResult = await client.session.prompt({
-      path: {
-        id: sessionID,
-      },
-      query: {
-        directory: payload.workspace,
-      },
+    const response = await client.session.prompt({
+      path: { id: session.data.id },
+      query: { directory: payload.workspace },
       body: {
         agent: payload.agent,
-        parts: [
-          {
-            type: "text",
-            text: payload.prompt,
-          },
-        ],
+        parts: [{ type: "text", text: payload.prompt }],
       },
     })
-    if (promptResult.error || !promptResult.data) {
-      throw new Error(`Failed to run prompt: ${responseError(promptResult)}`)
+    if (response.error || !response.data) {
+      throw new Error(`prompt failed: ${JSON.stringify(response.error)}`)
     }
 
-    const parts = Array.isArray(promptResult.data.parts) ? promptResult.data.parts : []
+    const parts = Array.isArray(response.data.parts) ? response.data.parts : []
     process.stdout.write(
       JSON.stringify(
         {
           ok: true,
           agent: payload.agent,
-          session_id: sessionID,
+          session_id: session.data.id,
           text: collectText(parts),
-          usage: sanitizeUsage(parts),
+          usage: collectUsage(parts),
           parts,
         },
         null,

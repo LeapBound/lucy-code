@@ -1,99 +1,62 @@
-# Lucy Orchestrator
+# Lucy Orchestrator (TypeScript)
 
-Lucy Orchestrator is a Feishu-first coding agent scheduler built around OpenCode execution.
+Feishu-first coding orchestrator built around OpenCode SDK.
 
-It treats OpenCode as a worker, while the orchestrator owns state, approval, policy, retries, and result reporting.
+## What It Does
 
-## Core Design
-
-- Feishu is the human interface for requirements, clarification, approval, and status feedback.
-- The orchestrator is the control plane: task state machine, policy gates, and execution lifecycle.
-- OpenCode is the execution plane: clarify, build, and test operations.
-- Worktree + container isolation is the default execution model.
-
-## Task States
-
-```
-NEW -> CLARIFYING -> WAIT_APPROVAL -> RUNNING -> TESTING -> DONE
-                                          \-> FAILED
-FAILED -> RUNNING (retry)
-```
-
-Guard rails:
-
-- RUNNING requires explicit approval and no open required questions.
-- TESTING requires an existing diff artifact.
-- DONE requires a generated test report.
-
-## Project Layout
-
-```
-src/lucy_orchestrator/
-  channels/            # Channel integrations (Feishu etc.)
-  adapters/            # OpenCode integration boundaries
-  cli.py               # Command-line entrypoint
-  config.py            # Local config schema and loader
-  exceptions.py        # Domain exceptions
-  models.py            # Typed task/plan models
-  orchestrator.py      # Main orchestration workflow
-  plan.py              # Plan validation rules
-  policy.py            # Path whitelist/blacklist policy checks
-  state_machine.py     # State transitions and guards
-  store.py             # JSON-backed task persistence
-  worktree.py          # Git worktree manager
-tests/
-```
+- Receives requirements from Feishu.
+- Runs explicit state machine: `NEW -> CLARIFYING -> WAIT_APPROVAL -> RUNNING -> TESTING -> DONE/FAILED`.
+- Uses OpenCode for clarify/build/test execution.
+- Supports task-level git worktree isolation and optional Docker execution.
+- Supports webhook callback mode with message dedupe and token validation.
 
 ## Quickstart
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
 npm install
-PYTHONPATH=src python -m unittest discover -s tests -p 'test_*.py'
+npm run build
+npm test
 ```
 
-Create and execute one task:
+Run CLI directly in dev mode:
 
 ```bash
-lucy-orchestrator create \
+npm run dev -- --help
+```
+
+## Typical Flow
+
+```bash
+# 1) init local config (optional: import Feishu credentials from nanobot)
+npm run dev -- config-init --from-nanobot
+
+# 2) create task
+npm run dev -- create \
   --title "Add retry policy" \
   --description "Implement retry guard for failed tasks" \
   --chat-id "oc_xxx" \
   --user-id "ou_xxx"
 
-lucy-orchestrator worktree-create --task-id <TASK_ID> --repo-path /path/to/repo
-lucy-orchestrator clarify --task-id <TASK_ID>
-lucy-orchestrator approval-message --task-id <TASK_ID> --user-id "ou_xxx" --text "同意，开始吧"
-lucy-orchestrator run --task-id <TASK_ID>
-lucy-orchestrator show --task-id <TASK_ID>
+# 3) clarify / approve / run
+npm run dev -- clarify --task-id <TASK_ID>
+npm run dev -- approval-message --task-id <TASK_ID> --user-id "ou_xxx" --text "同意，开始吧"
+npm run dev -- run --task-id <TASK_ID>
 ```
 
-Initialize your own Lucy config (recommended first step):
+## Feishu Integration
+
+Single event processing:
 
 ```bash
-lucy-orchestrator config-init --from-nanobot
-lucy-orchestrator config-show
-```
-
-Config example is available at `examples/lucy_config.json`.
-
-Process a real Feishu event payload and optionally send a reply using `~/.lucy-orchestrator/config.json` credentials:
-
-```bash
-lucy-orchestrator feishu-message \
+npm run dev -- feishu-message \
   --payload-file examples/feishu_message_event.json \
-  --repo-name lucy-code \
-  --auto-provision-worktree \
-  --repo-path /path/to/repo \
-  --send-reply
+  --repo-name lucy-code
 ```
 
-Run a real Feishu webhook server:
+Webhook server:
 
 ```bash
-lucy-orchestrator serve-feishu-webhook \
+npm run dev -- serve-feishu-webhook \
   --host 0.0.0.0 \
   --port 18791 \
   --repo-name lucy-code \
@@ -102,35 +65,38 @@ lucy-orchestrator serve-feishu-webhook \
   --send-reply
 ```
 
-Run with OpenCode SDK mode (default):
+## OpenCode Drivers
+
+- Default: `sdk` (official `@opencode-ai/sdk`)
+- Fallback: `cli` (`--opencode-driver cli`)
+
+The SDK path runs through `scripts/opencode_sdk_bridge.mjs` to keep one-shot commands deterministic.
+
+Docker mode (for CLI fallback and test commands):
 
 ```bash
-lucy-orchestrator --workspace /path/to/worktree clarify --task-id <TASK_ID>
-lucy-orchestrator --workspace /path/to/worktree run --task-id <TASK_ID>
-```
-
-Fallback to raw CLI driver if needed:
-
-```bash
-lucy-orchestrator --opencode-driver cli --workspace /path/to/worktree run --task-id <TASK_ID>
-```
-
-Run OpenCode and tests in Docker with task worktree mounted:
-
-```bash
-lucy-orchestrator \
+npm run dev -- \
+  --opencode-driver cli \
   --opencode-use-docker \
   --opencode-docker-image nanobot-opencode \
-  --workspace /path/to/worktree \
   run --task-id <TASK_ID>
 ```
 
-## Feishu + OpenCode Integration Notes
+## Layout
 
-- `channels/feishu.py` handles Feishu event parsing and message sending.
-- `channels/feishu_webhook.py` provides webhook processor/server with dedupe and verification token support.
-- `config.py` manages Lucy local config at `~/.lucy-orchestrator/config.json`.
-- `scripts/opencode_sdk_bridge.mjs` integrates official `@opencode-ai/sdk` for agent execution.
-- `adapters/opencode.py` uses SDK driver by default, with optional CLI fallback (`--opencode-driver cli`).
-- Docker execution remains available for test commands and CLI fallback mode.
-- `intent.py` supports rules + optional LLM intent classification (`approve/reject/clarify/unknown`) for natural-language approval messages.
+```text
+src/
+  adapters/
+  channels/
+  cli.ts
+  config.ts
+  intent.ts
+  models.ts
+  orchestrator.ts
+  plan.ts
+  policy.ts
+  state-machine.ts
+  store.ts
+  worktree.ts
+test/
+```
