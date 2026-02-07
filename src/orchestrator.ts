@@ -1,4 +1,5 @@
 import { writeFile } from "node:fs/promises"
+import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import { mkdirSync } from "node:fs"
 
@@ -16,6 +17,7 @@ import {
   recordTaskEvent,
   StepType,
   TaskState,
+  type PlanStep,
   type RepoContext,
   type Task,
   type TaskSource,
@@ -247,7 +249,43 @@ export class Orchestrator {
         transition(task, TaskState.DONE, "state.change", "Task completed")
       } else {
         task.execution.lastError = "One or more tests failed"
-        transition(task, TaskState.FAILED, "state.change", "Task failed in tests")
+        
+        // Enter auto-fix loop if attempts remaining and not exceeding max
+        if (task.execution.attempt < task.execution.maxAttempts) {
+          transition(task, TaskState.AUTO_FIXING, "state.change", "Entering auto-fix loop")
+          
+          // Attempt auto-fix
+          try {
+            const fixResult = await this.attemptAutoFix(task, testResults)
+            if (fixResult.success) {
+              // Re-run tests after fix
+              const retestResults = await this.executeTestSteps(task, testSteps)
+              const allRetestPassed = retestResults.every((result) => result.exitCode === 0)
+              
+              if (allRetestPassed) {
+                task.execution.lastError = null
+                transition(task, TaskState.DONE, "state.change", "Task completed after auto-fix")
+              } else {
+                // Fix didn't solve issue, set to failed but allow retry
+                task.execution.lastError = "Auto-fix did not resolve test failures"
+                task.artifacts.testResults = retestResults
+                await this.writeTestReport(task.taskId, retestResults)
+                transition(task, TaskState.FAILED, "state.change", "Auto-fix failed, tests still failing")
+              }
+            } else {
+              // Auto-fix failed completely
+              task.execution.lastError = `Auto-fix failed: ${fixResult.error}`
+              transition(task, TaskState.FAILED, "state.change", "Auto-fix execution failed")
+            }
+          } catch (fixError) {
+            // Catch-all if auto-fix throws
+            task.execution.lastError = `Auto-fix threw exception: ${String(fixError instanceof Error ? fixError.message : fixError)}`
+            transition(task, TaskState.FAILED, "state.change", "Auto-fix execution threw error")
+          }
+        } else {
+          // No more attempts left
+          transition(task, TaskState.FAILED, "state.change", "Task failed in tests after max attempts")
+        }
       }
     } catch (error) {
       task.execution.lastError = error instanceof Error ? error.message : String(error)
@@ -605,5 +643,130 @@ export class Orchestrator {
       "utf-8",
     )
     return reportPath
+  }
+
+  private async executeTestSteps(
+    task: Task,
+    testSteps: PlanStep[],
+  ): Promise<Array<Record<string, unknown>>> {
+    const results: Array<Record<string, unknown>> = []
+    let allPassed = true
+
+    for (const step of testSteps) {
+      const command = step.command ?? ""
+      const result = await this.opencodeClient.runTest(task, command)
+      results.push({
+        command: result.command,
+        exitCode: result.exitCode,
+        logPath: result.logPath,
+        durationMs: result.durationMs,
+      })
+      if (result.exitCode !== 0) {
+        allPassed = false
+        break // Stop on first failure like original logic
+      }
+    }
+
+    return results
+  }
+
+  private async attemptAutoFix(
+    task: Task,
+    testResults: Array<Record<string, unknown>>,
+  ): Promise<{ success: boolean; error?: string }> {
+    if (!task.repo.worktreePath) {
+      return { success: false, error: "Task worktree path is missing" }
+    }
+
+    // Collect failed test information
+    const failedTests = testResults.filter((result) => Number(result.exitCode) !== 0)
+    if (failedTests.length === 0) {
+      return { success: true } // No failures to fix
+    }
+
+    // Read test logs to get detailed error information
+    const logPaths = failedTests
+      .map((result) => result.logPath)
+      .filter((path): path is string => Boolean(path && typeof path === "string"))
+
+    let logContent = ""
+    for (const logPath of logPaths) {
+      try {
+        const content = await readFile(logPath, "utf-8")
+        logContent += `\n--- Test Log: ${logPath} ---\n${content}\n--- End Log ---\n`
+      } catch {
+        // If can't read log, use raw test result info
+        logContent += `\n--- Raw Test Result ---\n${JSON.stringify(failedTests[0], null, 2)}\n`
+      }
+    }
+
+    // Read current diff to include in fix prompt
+    let diffContent = ""
+    if (task.artifacts.diffPath) {
+      try {
+        diffContent = await readFile(task.artifacts.diffPath, "utf-8")
+      } catch {
+        // Diff might not be readable, continue without it
+      }
+    }
+
+    // Build fix prompt
+    const fixPrompt = `
+您之前生成的计划：
+${JSON.stringify(task.plan, null, 2)}
+
+当前代码变更：
+${diffContent}
+
+测试失败日志：
+${logContent}
+
+原始任务需求：
+${task.description}
+
+请基于以上信息分析失败原因，在当前工作目录（${task.repo.worktreePath}）进行必要的代码修改。
+只输出修改后的代码文件内容，不要输出其他解释。
+`.trim()
+
+    try {
+      // First get OpenCode to analyze the failure
+      const analysisPrompt = `
+Based on the following test failures, analyze the root cause:
+
+Failed tests: ${failedTests.map((item) => item.command).join(", ")}
+Test logs: ${logContent}
+Current diff: ${diffContent}
+
+Only output the analysis in plain text, no code changes yet.
+`
+      const analysisResult = await this.opencodeClient.clarify({
+        ...task,
+        description: analysisPrompt,
+      })
+
+      // Then run build to implement fixes based on analysis
+      const buildResult = await this.opencodeClient.build({
+        ...task,
+        description: `Auto-fix for test failures based on analysis: ${analysisResult.summary}`,
+      })
+
+      // Update diff and changed files after fix
+      task.artifacts.diffPath = buildResult.diffPath
+      task.artifacts.changedFiles = buildResult.changedFiles
+
+      // Record the fix attempt
+      recordTaskEvent(task, "autofix.attempted", "Auto-fix attempt completed", {
+        diffPath: buildResult.diffPath,
+        changedFiles: buildResult.changedFiles.length,
+      })
+
+      return { success: true }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      recordTaskEvent(task, "autofix.failed", "Auto-fix attempt failed", {
+        error: errorMessage,
+      })
+      return { success: false, error: errorMessage }
+    }
   }
 }

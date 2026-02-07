@@ -6,9 +6,10 @@ const ALLOWED_TRANSITIONS: Record<TaskState, Set<TaskState>> = {
   [TaskState.CLARIFYING]: new Set([TaskState.WAIT_APPROVAL, TaskState.FAILED, TaskState.CANCELLED]),
   [TaskState.WAIT_APPROVAL]: new Set([TaskState.RUNNING, TaskState.FAILED, TaskState.CANCELLED]),
   [TaskState.RUNNING]: new Set([TaskState.TESTING, TaskState.FAILED, TaskState.CANCELLED]),
-  [TaskState.TESTING]: new Set([TaskState.DONE, TaskState.FAILED, TaskState.CANCELLED]),
+  [TaskState.TESTING]: new Set([TaskState.DONE, TaskState.FAILED, TaskState.AUTO_FIXING, TaskState.CANCELLED]),
+  [TaskState.AUTO_FIXING]: new Set([TaskState.TESTING, TaskState.DONE, TaskState.FAILED, TaskState.CANCELLED]),
   [TaskState.DONE]: new Set(),
-  [TaskState.FAILED]: new Set([TaskState.RUNNING, TaskState.CANCELLED]),
+  [TaskState.FAILED]: new Set([TaskState.RUNNING, TaskState.AUTO_FIXING, TaskState.CANCELLED]),
   [TaskState.CANCELLED]: new Set(),
 }
 
