@@ -129,7 +129,9 @@ export function utcNowIso(): string {
 }
 
 export function createTaskId(): string {
-  const stamp = new Date().toISOString().replace(/[-:T.Z]/g, "").slice(0, 14)
+  // Keep IDs short and readable. Use UTC date (YYYYMMDD) + short random suffix.
+  // Example: task_20260208_aa4788
+  const stamp = new Date().toISOString().replace(/[-:T.Z]/g, "").slice(0, 8)
   return `task_${stamp}_${randomUUID().slice(0, 6)}`
 }
 

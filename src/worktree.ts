@@ -181,9 +181,10 @@ export async function buildWorktreeName(
   title: string,
   options?: { maxSlugLen?: number; workspace?: string },
 ): Promise<string> {
+  const taskKey = shortenTaskKey(taskId)
   const trimmedTitle = title.trim()
   if (!trimmedTitle) {
-    return taskId
+    return taskKey
   }
 
   const maxSlugLen = options?.maxSlugLen ?? 32
@@ -208,7 +209,25 @@ export async function buildWorktreeName(
     slug = slug.slice(0, maxSlugLen).replace(/-+$/, "")
   }
 
-  return `${taskId}--${slug}`
+  return `${taskKey}--${slug}`
+}
+
+function shortenTaskKey(taskId: string): string {
+  // Prefer a compact key in branch/worktree names.
+  // task_20260208_aa4788 -> 20260208-aa4788
+  // If the taskId doesn't match the expected pattern, fall back to a safe ASCII form.
+  const match = taskId.match(/^task_(\d{8})_([a-z0-9]{6,})$/i)
+  if (match) {
+    return `${match[1]}-${match[2].toLowerCase()}`
+  }
+  return taskId
+    .replace(/^task_/, "")
+    .replace(/_/g, "-")
+    .replace(/[^a-zA-Z0-9-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+/, "")
+    .replace(/-+$/, "")
+    .toLowerCase() || "task"
 }
 
 export class WorktreeManager {
@@ -235,7 +254,7 @@ export class WorktreeManager {
     }
 
     await mkdir(this.root, { recursive: true })
-    const baseRef = this.refExists(baseBranch) ? baseBranch : "HEAD"
+    const baseRef = this.resolveBaseRef(baseBranch)
     this.run(["git", "worktree", "add", "-b", branch, targetPath, baseRef])
     return { branch, path: targetPath }
   }
@@ -258,6 +277,42 @@ export class WorktreeManager {
       encoding: "utf-8",
     })
     return result.status === 0
+  }
+
+  private resolveBaseRef(preferred: string): string {
+    if (preferred && this.refExists(preferred)) {
+      return preferred
+    }
+
+    const originHead = this.getOriginHeadRef()
+    if (originHead) {
+      return originHead
+    }
+
+    for (const candidate of ["master", "main"]) {
+      if (this.refExists(candidate)) {
+        return candidate
+      }
+    }
+
+    throw new WorktreeError(
+      `Base branch not found: ${preferred}. Specify an existing --base-branch, or ensure origin/HEAD, master or main exists.`,
+    )
+  }
+
+  private getOriginHeadRef(): string | null {
+    const result = spawnSync("git", ["symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"], {
+      cwd: this.repoPath,
+      encoding: "utf-8",
+    })
+    if (result.status !== 0) {
+      return null
+    }
+    const ref = (result.stdout ?? "").trim()
+    if (!ref) {
+      return null
+    }
+    return this.refExists(ref) ? ref : null
   }
 
   private run(command: string[]): void {
