@@ -1,6 +1,6 @@
 import { writeFile } from "node:fs/promises"
 import { readFile } from "node:fs/promises"
-import { join, resolve } from "node:path"
+import { basename, dirname, join, resolve } from "node:path"
 import { mkdirSync } from "node:fs"
 
 import type { OpenCodeClient } from "./adapters/opencode.js"
@@ -207,7 +207,9 @@ export class Orchestrator {
     branchPrefix?: string
   }): Promise<Task> {
     const task = await this.store.get(input.taskId)
-    const manager = new WorktreeManager(input.repoPath, input.worktreesRoot)
+    const repoPath = resolve(input.repoPath)
+    const worktreesRoot = input.worktreesRoot ?? defaultWorktreesRoot(repoPath, task.repo.name)
+    const manager = new WorktreeManager(repoPath, worktreesRoot)
     const handle = await manager.create(
       task.taskId,
       task.title,
@@ -231,9 +233,10 @@ export class Orchestrator {
     force?: boolean
   }): Promise<Task> {
     const task = await this.store.get(input.taskId)
-    const manager = new WorktreeManager(input.repoPath, input.worktreesRoot)
-    const root = input.worktreesRoot ?? join(input.repoPath, "worktrees")
-    const legacyPath = join(root, task.taskId)
+    const repoPath = resolve(input.repoPath)
+    const worktreesRoot = input.worktreesRoot ?? defaultWorktreesRoot(repoPath, task.repo.name)
+    const manager = new WorktreeManager(repoPath, worktreesRoot)
+    const legacyPath = join(repoPath, "worktrees", task.taskId)
     const targetPath = task.repo.worktreePath ?? legacyPath
     await manager.remove(targetPath, input.force ?? false)
     recordTaskEvent(task, "worktree.removed", "Task worktree removed")
@@ -835,4 +838,24 @@ Only output the analysis in plain text, no code changes yet.
       return { success: false, error: errorMessage }
     }
   }
+}
+
+function safeDirSegment(input: string): string {
+  const trimmed = input.trim()
+  if (!trimmed) {
+    return "repository"
+  }
+  const safe = trimmed
+    .replace(/[\\/]+/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+/, "")
+    .replace(/-+$/, "")
+  return safe || "repository"
+}
+
+function defaultWorktreesRoot(repoPath: string, repoName: string): string {
+  const normalizedName = repoName.trim() && repoName.trim() !== "repository" ? repoName.trim() : basename(repoPath)
+  return join(dirname(repoPath), "agent", safeDirSegment(normalizedName))
 }

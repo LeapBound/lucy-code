@@ -46,7 +46,7 @@ npm run dev -- run --task-id <TASK_ID>
 
 说明：
 
-- 默认会为每个任务创建独立 worktree：`<repoPath>/worktrees/<TASK_ID>--<slug>`（可用 `--worktrees-root` 改根目录）。
+- 默认 worktree 根目录：`<dirname(repoPath)>/agent/<repoName>`（可用 `--worktrees-root` 覆盖）。任务 worktree：`<worktreesRoot>/<TASK_ID>--<slug>`。
 - 默认分支名：`agent/<TASK_ID>--<slug>`（标题含中文时会尽量转换为短英文；无法转换时会退化为 `task-<hash>`）。
 
 ## 飞书集成
