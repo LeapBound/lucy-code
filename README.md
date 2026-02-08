@@ -7,7 +7,7 @@
 - 从飞书接收需求。
 - 运行显式状态机：`NEW -> CLARIFYING -> WAIT_APPROVAL -> RUNNING -> TESTING -> DONE/FAILED`。
 - 使用 OpenCode 执行澄清 / 构建 / 测试。
-- 支持以任务为粒度的 git worktree 隔离，并可选使用 Docker 执行。
+- 默认以任务为粒度创建 git worktree 隔离执行环境，并可选使用 Docker 执行。
 - 同时支持 webhook 回调模式与长连接（WebSocket）模式。
 
 ## 快速开始
@@ -34,6 +34,7 @@ npm run dev -- config-init --from-nanobot
 npm run dev -- create \
   --title "增加重试策略" \
   --description "为失败任务实现重试保护" \
+  --repo-path /path/to/repo \
   --chat-id "oc_xxx" \
   --user-id "ou_xxx"
 
@@ -43,6 +44,11 @@ npm run dev -- approval-message --task-id <TASK_ID> --user-id "ou_xxx" --text "�
 npm run dev -- run --task-id <TASK_ID>
 ```
 
+说明：
+
+- 默认会为每个任务创建独立 worktree：`<repoPath>/worktrees/<TASK_ID>--<slug>`（可用 `--worktrees-root` 改根目录）。
+- 默认分支名：`agent/<TASK_ID>--<slug>`（标题含中文时会尽量转换为短英文；无法转换时会退化为 `task-<hash>`）。
+
 ## 飞书集成
 
 单次事件处理：
@@ -50,7 +56,8 @@ npm run dev -- run --task-id <TASK_ID>
 ```bash
 npm run dev -- feishu-message \
   --payload-file examples/feishu_message_event.json \
-  --repo-name lucy-code
+  --repo-name lucy-code \
+  --repo-path /path/to/repo
 ```
 
 Webhook 服务：
@@ -60,7 +67,6 @@ npm run dev -- serve-feishu-webhook \
   --host 0.0.0.0 \
   --port 18791 \
   --repo-name lucy-code \
-  --auto-provision-worktree \
   --repo-path /path/to/repo \
   --send-reply
 ```
@@ -70,7 +76,6 @@ npm run dev -- serve-feishu-webhook \
 ```bash
 npm run dev -- serve-feishu-longconn \
   --repo-name lucy-code \
-  --auto-provision-worktree \
   --repo-path /path/to/repo \
   --send-reply
 ```

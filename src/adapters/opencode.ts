@@ -622,9 +622,16 @@ import { createOpencode } from "@opencode-ai/sdk";
   }
 
   private resolveWorkspace(task: Task): string {
-    const workspace = task.repo.worktreePath ?? this.workspace
-    if (!workspace) {
-      throw new OpenCodeInvocationError("Workspace is required")
+    const workspace = task.repo.worktreePath
+    const branch = task.repo.branch
+    if (!workspace || !branch) {
+      throw new OpenCodeInvocationError(
+        `Task worktree is not provisioned (task_id=${task.taskId}, branch=${String(
+          branch,
+        )}, worktreePath=${String(
+          workspace,
+        )}). Strict mode requires per-task git worktree isolation before running OpenCode.`,
+      )
     }
     return resolve(workspace)
   }

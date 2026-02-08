@@ -158,7 +158,9 @@ export async function main(): Promise<void> {
     .option("--message-id <id>", "Message ID", "manual-message")
     .option("--repo-name <name>", "Repo name", "repository")
     .option("--base-branch <name>", "Base branch", "main")
-    .option("--worktree-path <path>", "Worktree path", process.cwd())
+    .option("--repo-path <path>", "Git repository path", process.cwd())
+    .option("--worktrees-root <path>", "Worktrees root path")
+    .option("--branch-prefix <prefix>", "Task branch prefix", "agent")
     .action(async (commandOptions) => {
       const options = normalizeOptions(program.opts())
       const orchestrator = buildOrchestrator(options)
@@ -174,11 +176,17 @@ export async function main(): Promise<void> {
         repo: {
           name: commandOptions.repoName,
           baseBranch: commandOptions.baseBranch,
-          worktreePath: commandOptions.worktreePath,
+          worktreePath: null,
           branch: null,
         },
       })
-      printJson(task)
+      const provisioned = await orchestrator.provisionWorktree({
+        taskId: task.taskId,
+        repoPath: commandOptions.repoPath,
+        worktreesRoot: commandOptions.worktreesRoot,
+        branchPrefix: commandOptions.branchPrefix,
+      })
+      printJson(provisioned)
     })
 
   program
@@ -186,7 +194,9 @@ export async function main(): Promise<void> {
     .requiredOption("--payload-file <path>")
     .option("--repo-name <name>", "Repo name", "repository")
     .option("--base-branch <name>", "Base branch", "main")
-    .option("--worktree-path <path>", "Worktree path", process.cwd())
+    .option("--repo-path <path>", "Git repository path", process.cwd())
+    .option("--worktrees-root <path>", "Worktrees root path")
+    .option("--branch-prefix <prefix>", "Task branch prefix", "agent")
     .action(async (commandOptions) => {
       const options = normalizeOptions(program.opts())
       const orchestrator = buildOrchestrator(options)
@@ -196,9 +206,14 @@ export async function main(): Promise<void> {
         requirement,
         repoName: commandOptions.repoName,
         baseBranch: commandOptions.baseBranch,
-        worktreePath: commandOptions.worktreePath,
       })
-      printJson(task)
+      const provisioned = await orchestrator.provisionWorktree({
+        taskId: task.taskId,
+        repoPath: commandOptions.repoPath,
+        worktreesRoot: commandOptions.worktreesRoot,
+        branchPrefix: commandOptions.branchPrefix,
+      })
+      printJson(provisioned)
     })
 
   program
@@ -206,11 +221,9 @@ export async function main(): Promise<void> {
     .requiredOption("--payload-file <path>")
     .option("--repo-name <name>", "Repo name", "repository")
     .option("--base-branch <name>", "Base branch", "main")
-    .option("--worktree-path <path>", "Worktree path", process.cwd())
     .option("--repo-path <path>", "Git repository path", process.cwd())
     .option("--worktrees-root <path>", "Worktrees root path")
     .option("--branch-prefix <prefix>", "Task branch prefix", "agent")
-    .option("--auto-provision-worktree", "Auto create task worktree", false)
     .option("--no-auto-clarify", "Skip clarify step")
     .option("--auto-run-on-approve", "Auto run task when approved", false)
     .option("--send-reply", "Send Feishu reply", false)
@@ -223,10 +236,8 @@ export async function main(): Promise<void> {
         requirement,
         repoName: commandOptions.repoName,
         baseBranch: commandOptions.baseBranch,
-        worktreePath: commandOptions.worktreePath,
         autoClarify: commandOptions.autoClarify,
         autoRunOnApprove: commandOptions.autoRunOnApprove,
-        autoProvisionWorktree: commandOptions.autoProvisionWorktree,
         repoPath: commandOptions.repoPath,
         worktreesRoot: commandOptions.worktreesRoot,
         branchPrefix: commandOptions.branchPrefix,
@@ -266,11 +277,9 @@ export async function main(): Promise<void> {
     .option("--port <number>", "Port", "18791")
     .option("--repo-name <name>", "Repo name", "repository")
     .option("--base-branch <name>", "Base branch", "main")
-    .option("--worktree-path <path>", "Worktree path", process.cwd())
     .option("--repo-path <path>", "Git repository path", process.cwd())
     .option("--worktrees-root <path>", "Worktrees root path")
     .option("--branch-prefix <prefix>", "Task branch prefix", "agent")
-    .option("--auto-provision-worktree", "Auto create task worktree", false)
     .option("--no-auto-clarify", "Skip clarify step")
     .option("--auto-run-on-approve", "Auto run task when approved", false)
     .option("--send-reply", "Send Feishu replies", false)
@@ -293,10 +302,8 @@ export async function main(): Promise<void> {
       const settings: FeishuWebhookSettings = {
         repoName: commandOptions.repoName,
         baseBranch: commandOptions.baseBranch,
-        worktreePath: commandOptions.worktreePath,
         autoClarify: commandOptions.autoClarify,
         autoRunOnApprove: commandOptions.autoRunOnApprove,
-        autoProvisionWorktree: commandOptions.autoProvisionWorktree,
         repoPath: commandOptions.repoPath,
         worktreesRoot: commandOptions.worktreesRoot,
         branchPrefix: commandOptions.branchPrefix,
@@ -324,7 +331,6 @@ export async function main(): Promise<void> {
         host: commandOptions.host,
         port: Number(commandOptions.port),
         sendReply: commandOptions.sendReply,
-        autoProvisionWorktree: commandOptions.autoProvisionWorktree,
       })
 
       await serveFeishuWebhook(processor, {
@@ -337,11 +343,9 @@ export async function main(): Promise<void> {
     .command("serve-feishu-longconn")
     .option("--repo-name <name>", "Repo name", "repository")
     .option("--base-branch <name>", "Base branch", "main")
-    .option("--worktree-path <path>", "Worktree path", process.cwd())
     .option("--repo-path <path>", "Git repository path", process.cwd())
     .option("--worktrees-root <path>", "Worktrees root path")
     .option("--branch-prefix <prefix>", "Task branch prefix", "agent")
-    .option("--auto-provision-worktree", "Auto create task worktree", false)
     .option("--no-auto-clarify", "Skip clarify step")
     .option("--auto-run-on-approve", "Auto run task when approved", false)
     .option("--send-reply", "Send Feishu replies", false)
@@ -365,10 +369,8 @@ export async function main(): Promise<void> {
       const settings: FeishuLongConnSettings = {
         repoName: commandOptions.repoName,
         baseBranch: commandOptions.baseBranch,
-        worktreePath: commandOptions.worktreePath,
         autoClarify: commandOptions.autoClarify,
         autoRunOnApprove: commandOptions.autoRunOnApprove,
-        autoProvisionWorktree: commandOptions.autoProvisionWorktree,
         repoPath: commandOptions.repoPath,
         worktreesRoot: commandOptions.worktreesRoot,
         branchPrefix: commandOptions.branchPrefix,
@@ -391,7 +393,6 @@ export async function main(): Promise<void> {
         status: "starting",
         mode: "longconn",
         sendReply: commandOptions.sendReply,
-        autoProvisionWorktree: commandOptions.autoProvisionWorktree,
       })
 
       await serveFeishuLongConnection({

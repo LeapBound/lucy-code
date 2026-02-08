@@ -1,6 +1,6 @@
 import { writeFile } from "node:fs/promises"
 import { readFile } from "node:fs/promises"
-import { resolve } from "node:path"
+import { join, resolve } from "node:path"
 import { mkdirSync } from "node:fs"
 
 import type { OpenCodeClient } from "./adapters/opencode.js"
@@ -210,6 +210,7 @@ export class Orchestrator {
     const manager = new WorktreeManager(input.repoPath, input.worktreesRoot)
     const handle = await manager.create(
       task.taskId,
+      task.title,
       task.repo.baseBranch,
       input.branchPrefix ?? "agent",
     )
@@ -231,7 +232,10 @@ export class Orchestrator {
   }): Promise<Task> {
     const task = await this.store.get(input.taskId)
     const manager = new WorktreeManager(input.repoPath, input.worktreesRoot)
-    await manager.remove(task.taskId, input.force ?? false)
+    const root = input.worktreesRoot ?? join(input.repoPath, "worktrees")
+    const legacyPath = join(root, task.taskId)
+    const targetPath = task.repo.worktreePath ?? legacyPath
+    await manager.remove(targetPath, input.force ?? false)
     recordTaskEvent(task, "worktree.removed", "Task worktree removed")
     await this.store.save(task)
     return task
@@ -410,7 +414,15 @@ export class Orchestrator {
       }
 
       if (task.approval.approvedBy && task.approval.approvedAt) {
-        if (input.autoProvisionWorktree && input.repoPath && !task.repo.branch) {
+        if (!task.repo.branch || !task.repo.worktreePath) {
+          if (!input.repoPath) {
+            return {
+              task,
+              replyText:
+                `任务 ${task.taskId} 已批准，但缺少 repoPath，无法创建 worktree。\n` +
+                "请在启动服务/命令时指定 --repo-path，并确保该路径是一个 git 仓库。",
+            }
+          }
           try {
             task = await this.provisionWorktree({
               taskId: task.taskId,
@@ -545,7 +557,15 @@ export class Orchestrator {
       branchPrefix?: string
     },
   ): Promise<{ task: Task; replyText: string }> {
-    if (input.autoProvisionWorktree && input.repoPath && !task.repo.branch) {
+    if (!task.repo.branch || !task.repo.worktreePath) {
+      if (!input.repoPath) {
+        return {
+          task,
+          replyText:
+            `任务 ${task.taskId} 已创建，但缺少 repoPath，无法创建 worktree。\n` +
+            "请在启动服务/命令时指定 --repo-path，并确保该路径是一个 git 仓库。",
+        }
+      }
       try {
         task = await this.provisionWorktree({
           taskId: task.taskId,
