@@ -345,7 +345,8 @@ export class Orchestrator {
       if (![TaskState.FAILED, TaskState.DONE, TaskState.CANCELLED].includes(task.state)) {
         try {
           transition(task, TaskState.FAILED, "state.change", "Task failed")
-        } catch {
+        } catch (transitionError) {
+          console.error("Failed to transition task to FAILED, applying fallback state mutation:", transitionError)
           task.state = TaskState.FAILED
           task.updatedAt = utcNowIso()
         }
@@ -388,7 +389,8 @@ export class Orchestrator {
           const task = await this.store.get(pendingTask.taskId)
           try {
             transition(task, TaskState.CANCELLED, "state.change", "Task cancelled by user")
-          } catch {
+          } catch (transitionError) {
+            console.error("Failed to transition task to CANCELLED during clarification, applying fallback:", transitionError)
             task.state = TaskState.CANCELLED
           }
           recordTaskEvent(task, "task.cancelled", "Task cancelled during clarification")
@@ -763,8 +765,9 @@ export class Orchestrator {
       try {
         const content = await readFile(logPath, "utf-8")
         logContent += `\n--- Test Log: ${logPath} ---\n${content}\n--- End Log ---\n`
-      } catch {
-        // If can't read log, use raw test result info
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        logContent += `\n--- Test Log Unavailable (${logPath}) ---\n${message}\n`
         logContent += `\n--- Raw Test Result ---\n${JSON.stringify(failedTests[0], null, 2)}\n`
       }
     }
@@ -774,8 +777,9 @@ export class Orchestrator {
     if (task.artifacts.diffPath) {
       try {
         diffContent = await readFile(task.artifacts.diffPath, "utf-8")
-      } catch {
-        // Diff might not be readable, continue without it
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        diffContent = `Diff unavailable: ${message}`
       }
     }
 
