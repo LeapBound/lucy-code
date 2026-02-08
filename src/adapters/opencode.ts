@@ -181,7 +181,7 @@ export class OpenCodeRuntimeClient implements OpenCodeClient {
     const startedAt = Date.now()
 
     let finalCommand = command
-    if (this.useDocker) {
+    if (this.useDocker && !this.shouldForceHostTestExecution(command)) {
       finalCommand = [
         "docker",
         "run",
@@ -235,6 +235,25 @@ export class OpenCodeRuntimeClient implements OpenCodeClient {
       logPath,
       durationMs,
     }
+  }
+
+  private shouldForceHostTestExecution(command: string): boolean {
+    const value = command.trim()
+    if (!value) {
+      return false
+    }
+    // If the test command starts its own docker/docker-compose, wrapping it in an outer
+    // `docker run` causes nested docker and flaky failures.
+    if (/(^|[\s;&|])docker\s+compose\b/i.test(value)) {
+      return true
+    }
+    if (/(^|[\s;&|])docker-compose\b/i.test(value)) {
+      return true
+    }
+    if (/testing\/scripts\/run-api-test/i.test(value)) {
+      return true
+    }
+    return false
   }
 
   private async runAgent(params: {
