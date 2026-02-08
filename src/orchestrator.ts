@@ -28,6 +28,8 @@ import { enforceFilePolicy } from "./policy.js"
 import { assertTransition, transition } from "./state-machine.js"
 import { TaskStore } from "./store.js"
 import { WorktreeManager } from "./worktree.js"
+import { ContainerWebSocketServer } from "./container-ws.js"
+import type { TaskEvent } from "./container-ws.js"
 import type { FeishuRequirement } from "./channels/feishu.js"
 import { FeishuConversationStore } from "./channels/feishu-conversation.js"
 
@@ -35,22 +37,66 @@ export interface OrchestratorOptions {
   reportDir?: string
   intentClassifier?: IntentClassifier
   conversationStore?: FeishuConversationStore
+  enableContainerSdk?: boolean
+  wsServerPort?: number
+  feishuMessenger?: { sendText(chatId: string, text: string): Promise<void> }
 }
 
 export class Orchestrator {
   private readonly reportDir: string
   private readonly intentClassifier: IntentClassifier
   private readonly conversationStore: FeishuConversationStore
+  private readonly wsServer?: ContainerWebSocketServer
 
   constructor(
     private readonly store: TaskStore,
     private readonly opencodeClient: OpenCodeClient,
-    options: OrchestratorOptions = {},
+    private readonly options: OrchestratorOptions = {},
   ) {
     this.reportDir = resolve(options.reportDir ?? ".orchestrator/reports")
     mkdirSync(this.reportDir, { recursive: true })
     this.intentClassifier = options.intentClassifier ?? new HybridIntentClassifier()
     this.conversationStore = options.conversationStore ?? new FeishuConversationStore()
+
+    if (options.enableContainerSdk) {
+      this.wsServer = new ContainerWebSocketServer(options.wsServerPort ?? 18791)
+      this.wsServer.on("task-status", (event) => {
+        void this.handleContainerEvent(event)
+      })
+    }
+  }
+
+  private async handleContainerEvent(event: TaskEvent): Promise<void> {
+    try {
+      const task = await this.store.get(event.taskId)
+      recordTaskEvent(task, event.type, typeof event.payload.message === "string" ? event.payload.message : "Container event received", event.payload)
+      await this.store.save(task)
+      
+      // Forward real-time status to Feishu if configured
+      if (this.options.feishuMessenger) {
+        const message = this.formatRealtimeStatus(event)
+        await this.options.feishuMessenger.sendText(task.source.chatId, message)
+      }
+    } catch (error) {
+      console.error(`Failed to handle container event for task ${event.taskId}:`, error)
+    }
+  }
+
+  private formatRealtimeStatus(event: TaskEvent): string {
+    switch (event.type) {
+      case "step-start":
+        return `任务 ${event.taskId}: 开始执行步骤 "${event.payload.stepTitle}"...`
+      case "step-complete":
+        return `任务 ${event.taskId}: 步骤 "${event.payload.stepTitle}" 完成。`
+      case "build-progress":
+        return `任务 ${event.taskId}: 构建进度 ${(event.payload.progressPercent ?? 0)}%`
+      case "test-failed":
+        return `任务 ${event.taskId}: 测试失败，正在尝试自动修复...`
+      case "task-completed":
+        return `任务 ${event.taskId}: 全部完成！`
+      default:
+        return `任务 ${event.taskId}: ${event.payload.message ?? "未知事件"}`
+    }
   }
 
   async createTask(input: {

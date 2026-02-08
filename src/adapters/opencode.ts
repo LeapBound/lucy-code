@@ -58,7 +58,7 @@ export interface OpenCodeClient {
 
 export interface OpenCodeRuntimeOptions {
   artifactRoot?: string
-  driver?: "sdk" | "cli"
+  driver?: "sdk" | "cli" | "container-sdk"
   command?: string
   useDocker?: boolean
   dockerImage?: string
@@ -72,11 +72,13 @@ export interface OpenCodeRuntimeOptions {
   sdkTimeoutMs?: number
   nodeCommand?: string
   sdkScript?: string
+  wsServerHost?: string
+  wsServerPort?: number
 }
 
 export class OpenCodeRuntimeClient implements OpenCodeClient {
   private readonly artifactRoot: string
-  private readonly driver: "sdk" | "cli"
+  private readonly driver: "sdk" | "cli" | "container-sdk"
   private readonly command: string
   private readonly useDocker: boolean
   private readonly dockerImage: string
@@ -90,6 +92,8 @@ export class OpenCodeRuntimeClient implements OpenCodeClient {
   private readonly sdkTimeoutMs: number
   private readonly nodeCommand: string
   private readonly sdkScript: string
+  private readonly wsServerHost: string
+  private readonly wsServerPort: number
 
   constructor(options: OpenCodeRuntimeOptions = {}) {
     this.artifactRoot = resolve(options.artifactRoot ?? ".orchestrator/artifacts")
@@ -98,7 +102,7 @@ export class OpenCodeRuntimeClient implements OpenCodeClient {
     this.command = options.command ?? "opencode"
     this.useDocker = options.useDocker ?? false
     this.dockerImage = options.dockerImage ?? "nanobot-opencode"
-    this.workspace = options.workspace ? resolve(options.workspace) : undefined
+    this.workspace = this.normalizeWorkspacePath(options.workspace)
     this.timeoutSec = options.timeoutSec ?? 900
     this.planAgent = options.planAgent ?? "plan"
     this.buildAgent = options.buildAgent ?? "build"
@@ -108,6 +112,15 @@ export class OpenCodeRuntimeClient implements OpenCodeClient {
     this.sdkTimeoutMs = options.sdkTimeoutMs ?? 5000
     this.nodeCommand = options.nodeCommand ?? "node"
     this.sdkScript = resolve(options.sdkScript ?? "scripts/opencode_sdk_bridge.mjs")
+    this.wsServerHost = options.wsServerHost ?? "host.docker.internal"
+    this.wsServerPort = options.wsServerPort ?? 18791
+  }
+
+  private normalizeWorkspacePath(workspacePath?: string): string | undefined {
+    if (!workspacePath) {
+      return undefined
+    }
+    return resolve(workspacePath)
   }
 
   async clarify(task: Task): Promise<ClarifyResult> {
@@ -230,6 +243,9 @@ export class OpenCodeRuntimeClient implements OpenCodeClient {
     taskId: string
     workspace: string
   }): Promise<OpenCodeRunResult> {
+    if (this.driver === "container-sdk") {
+      return this.runAgentInContainerWithWs(params)
+    }
     if (this.driver === "sdk" && !this.useDocker) {
       return this.runAgentWithSdk(params)
     }
@@ -324,6 +340,84 @@ export class OpenCodeRuntimeClient implements OpenCodeClient {
         error: `OpenCode SDK execution failed: ${message}`,
       }
     }
+  }
+
+  private async runAgentInContainerWithWs(params: {
+    agent: string
+    prompt: string
+    taskId: string
+    workspace: string
+  }): Promise<OpenCodeRunResult> {
+    // Construct the Docker command to run OpenCode in container with WebSocket communication
+    const scriptContent = `
+import { createOpencode } from "@opencode-ai/sdk";
+(async () => {
+  const { client } = await createOpencode({ 
+    hostname: process.env.OPENCODE_WS_HOST, 
+    port: parseInt(process.env.OPENCODE_WS_PORT) 
+  });
+  const session = await client.session.create({ 
+    body: { title: \`lucy-\${process.env.OPENCODE_TASK_ID}-\${params.agent}\` }, 
+    query: { directory: "/workspace" } 
+  });
+  const result = await client.session.prompt({ 
+    path: { id: session.data.id }, 
+    query: { directory: "/workspace" }, 
+    body: { 
+      agent: "${params.agent}", 
+      parts: [{ type: "text", text: \`${params.prompt.replace(/`/g, '\\`')}\` }] 
+    } 
+  });
+  console.log(JSON.stringify(result));
+})().catch(err => { 
+  console.error(err); 
+  process.exit(1); 
+});
+    `.trim();
+
+    const containerCommand = [
+      "docker",
+      "run",
+      "--rm",
+      "-v",
+      `${params.workspace}:/workspace`,
+      "-w",
+      "/workspace",
+      "-e",
+      `OPENCODE_WS_HOST=${this.wsServerHost}`,
+      "-e",
+      `OPENCODE_WS_PORT=${this.wsServerPort}`,
+      "-e",
+      `OPENCODE_TASK_ID=${params.taskId}`,
+      this.dockerImage,
+      "sh",
+      "-c",
+      `echo '${scriptContent}' > /tmp/opencode_task.mjs && node /tmp/opencode_task.mjs`
+    ];
+
+    const result = spawnSync(containerCommand[0], containerCommand.slice(1), {
+      encoding: "utf-8",
+      timeout: this.timeoutSec * 1000,
+    });
+
+    const stdout = result.stdout ?? "";
+    const stderr = result.stderr ?? "";
+    const events = this.parseJsonlEvents(stdout);
+    const text = this.extractTextFromEvents(events);
+    const usage = this.extractUsageFromCliEvents(events);
+    const error = result.status === 0 ? undefined : this.extractErrorText(events, stderr);
+
+    const runResult: OpenCodeRunResult = {
+      agent: params.agent,
+      returnCode: result.status ?? 1,
+      events,
+      text,
+      usage,
+      stderr,
+      error,
+    };
+    await this.writeAgentLog(params.taskId, containerCommand, params.workspace, runResult, stdout);
+    return runResult;
   }
 
   private async runAgentWithCli(params: {

@@ -48,11 +48,13 @@ interface GlobalOptions {
   opencodeSdkBaseUrl?: string
   opencodeSdkHostname: string
   opencodeSdkPort: number
-  opencodeSdkTimeoutMs: number
-  intentMode: "rules" | "llm" | "hybrid"
-  intentAgent: string
-  intentConfidenceThreshold: number
-}
+    opencodeSdkTimeoutMs: number
+    opencodeWsServerHost: string
+    opencodeWsServerPort: number
+    intentMode: "rules" | "llm" | "hybrid"
+    intentAgent: string
+    intentConfidenceThreshold: number
+  }
 
 function buildOrchestrator(options: GlobalOptions): Orchestrator {
   const store = new TaskStore(options.storeDir)
@@ -124,7 +126,7 @@ export async function main(): Promise<void> {
     .option("--artifact-dir <path>", "Artifact directory", ".orchestrator/artifacts")
     .option("--report-dir <path>", "Report directory", ".orchestrator/reports")
     .option("--workspace <path>", "Workspace path", process.cwd())
-    .option("--opencode-driver <driver>", "OpenCode driver (sdk|cli)", "sdk")
+     .option("--opencode-driver <driver>", "OpenCode driver (sdk|cli|container-sdk)", "sdk")
     .option("--opencode-node-command <bin>", "Node runtime for SDK bridge", "node")
     .option(
       "--opencode-sdk-script <path>",
@@ -140,7 +142,9 @@ export async function main(): Promise<void> {
     .option("--opencode-sdk-base-url <url>", "Connect to existing OpenCode server")
     .option("--opencode-sdk-hostname <host>", "SDK server host", "127.0.0.1")
     .option("--opencode-sdk-port <port>", "SDK server port (0 for random)", "0")
-    .option("--opencode-sdk-timeout-ms <ms>", "SDK boot timeout ms", "5000")
+     .option("--opencode-sdk-timeout-ms <ms>", "SDK boot timeout ms", "5000")
+     .option("--opencode-ws-server-host <host>", "WebSocket server host for container SDK", "host.docker.internal")
+     .option("--opencode-ws-server-port <port>", "WebSocket server port", "18791")
     .option("--intent-mode <mode>", "Intent classifier mode (rules|llm|hybrid)", "rules")
     .option("--intent-agent <agent>", "LLM intent classifier agent", "plan")
     .option("--intent-confidence-threshold <float>", "LLM confidence threshold", "0.8")
@@ -551,12 +555,14 @@ function normalizeOptions(raw: Record<string, unknown>): GlobalOptions {
         : undefined,
     opencodeSdkHostname: String(raw.opencodeSdkHostname ?? "127.0.0.1"),
     opencodeSdkPort: Number(raw.opencodeSdkPort ?? 0),
-    opencodeSdkTimeoutMs: Number(raw.opencodeSdkTimeoutMs ?? 5000),
-    intentMode:
-      raw.intentMode === "llm" || raw.intentMode === "hybrid" ? raw.intentMode : "rules",
-    intentAgent: String(raw.intentAgent ?? "plan"),
-    intentConfidenceThreshold: Number(raw.intentConfidenceThreshold ?? 0.8),
-  }
+     opencodeSdkTimeoutMs: Number(raw.opencodeSdkTimeoutMs ?? 5000),
+     opencodeWsServerHost: String(raw.opencodeWsServerHost ?? "host.docker.internal"),
+     opencodeWsServerPort: Number(raw.opencodeWsServerPort ?? 18791),
+     intentMode:
+       raw.intentMode === "llm" || raw.intentMode === "hybrid" ? raw.intentMode : "rules",
+     intentAgent: String(raw.intentAgent ?? "plan"),
+     intentConfidenceThreshold: Number(raw.intentConfidenceThreshold ?? 0.8),
+   }
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
