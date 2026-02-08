@@ -4,6 +4,7 @@ import { Orchestrator } from "../orchestrator.js"
 import type { FeishuRequirement } from "./feishu.js"
 import { FeishuMessenger } from "./feishu.js"
 import { ProcessedMessageStore } from "./feishu-webhook.js"
+import { tryParseJsonObject } from "../json-utils.js"
 
 export interface FeishuLongConnSettings {
   repoName: string
@@ -108,10 +109,11 @@ export class FeishuLongConnProcessor {
         return ""
       }
       try {
-        const parsed = JSON.parse(content)
+        const parsed = tryParseJsonObject(content)
         const text = parsed && typeof parsed === "object" ? String((parsed as Record<string, unknown>).text ?? "") : ""
         return text.trim()
-      } catch {
+      } catch (error) {
+        console.warn("Failed to parse long-connection text content as JSON, fallback to raw text:", error)
         return content.trim()
       }
     }
@@ -139,8 +141,8 @@ export async function serveFeishuLongConnection(options: FeishuLongConnStartOpti
     verificationToken: options.verificationToken,
   }).register({
     "im.message.receive_v1": (data: Record<string, unknown>) => {
-      void options.processor.handleMessageEvent(data).catch(() => {
-        // keep long connection alive even when one event fails
+      void options.processor.handleMessageEvent(data).catch((error) => {
+        console.error("Feishu long-connection event processing failed:", error)
       })
     },
   })

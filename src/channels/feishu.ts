@@ -2,6 +2,8 @@ import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 
 import { OrchestratorError } from "../errors.js"
+import { requestJsonObject } from "../http.js"
+import { tryParseJsonObject } from "../json-utils.js"
 
 export interface FeishuRequirement {
   userId: string
@@ -24,14 +26,13 @@ export async function loadFeishuCredentialsFromNanobot(
   try {
     raw = await readFile(absolutePath, "utf-8")
   } catch (error) {
-    throw new OrchestratorError(`Nanobot config file not found: ${absolutePath}`)
+    throw new OrchestratorError(`Nanobot config file not found: ${absolutePath}. ${String(error)}`)
   }
 
   let payload: unknown
-  try {
-    payload = JSON.parse(raw)
-  } catch (error) {
-    throw new OrchestratorError(`Invalid Nanobot config JSON: ${String(error)}`)
+  payload = tryParseJsonObject(raw)
+  if (!payload) {
+    throw new OrchestratorError(`Invalid Nanobot config JSON in ${absolutePath}`)
   }
 
   const channels = readObject(payload, "channels")
@@ -55,11 +56,7 @@ export function parseRequirementEvent(payload: unknown): FeishuRequirement {
   const contentRaw = message.content
   let content: Record<string, unknown> = {}
   if (typeof contentRaw === "string") {
-    try {
-      content = JSON.parse(contentRaw) as Record<string, unknown>
-    } catch {
-      content = {}
-    }
+    content = tryParseJsonObject(contentRaw) ?? {}
   } else if (contentRaw && typeof contentRaw === "object") {
     content = contentRaw as Record<string, unknown>
   }
@@ -131,19 +128,12 @@ export class FeishuMessenger {
       headers.authorization = `Bearer ${token}`
     }
 
-    const response = await fetch(`${this.baseUrl}${path}`, {
+    return requestJsonObject(`${this.baseUrl}${path}`, {
       method,
       headers,
-      body: payload ? JSON.stringify(payload) : undefined,
+      payload,
+      timeoutMs: 10_000,
     })
-
-    const raw = await response.text()
-    try {
-      const data = JSON.parse(raw)
-      return (data && typeof data === "object" ? data : {}) as Record<string, unknown>
-    } catch {
-      throw new OrchestratorError(`Invalid Feishu response payload: ${raw}`)
-    }
   }
 }
 

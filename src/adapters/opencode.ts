@@ -5,6 +5,7 @@ import { resolve } from "node:path"
 import { promisify } from "node:util"
 
 import { OpenCodeInvocationError } from "../errors.js"
+import { extractFirstJsonObject, tryParseJsonObject } from "../json-utils.js"
 import {
   defaultPlanConstraints,
   QuestionStatus,
@@ -501,13 +502,9 @@ import { createOpencode } from "@opencode-ai/sdk";
       if (!value) {
         continue
       }
-      try {
-        const parsed = JSON.parse(value)
-        if (parsed && typeof parsed === "object") {
-          events.push(parsed as Record<string, unknown>)
-        }
-      } catch {
-        continue
+      const parsed = tryParseJsonObject(value)
+      if (parsed) {
+        events.push(parsed)
       }
     }
     return events
@@ -768,27 +765,7 @@ import { createOpencode } from "@opencode-ai/sdk";
   }
 
   private extractJsonObject(text: string): Record<string, unknown> | null {
-    const candidate = text.trim()
-    if (!candidate) {
-      return null
-    }
-    try {
-      const parsed = JSON.parse(candidate)
-      return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null
-    } catch {
-      // continue
-    }
-
-    const match = candidate.match(/\{[\s\S]*\}/)
-    if (!match) {
-      return null
-    }
-    try {
-      const parsed = JSON.parse(match[0])
-      return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null
-    } catch {
-      return null
-    }
+    return extractFirstJsonObject(text)
   }
 
   private extractJsonFromEvents(events: Array<Record<string, unknown>>): Record<string, unknown> | null {

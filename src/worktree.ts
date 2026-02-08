@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process"
 import { createOpencode } from "@opencode-ai/sdk"
 
 import { WorktreeError } from "./errors.js"
+import { extractFirstJsonObject } from "./json-utils.js"
 
 export interface WorktreeHandle {
   branch: string
@@ -34,30 +35,6 @@ function containsCjk(input: string): boolean {
   return /[\u4e00-\u9fff]/.test(input)
 }
 
-function extractFirstObject(text: string): Record<string, unknown> | null {
-  const candidate = text.trim()
-  if (!candidate) {
-    return null
-  }
-  try {
-    const parsed = JSON.parse(candidate)
-    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null
-  } catch {
-    // continue
-  }
-
-  const match = candidate.match(/\{[\s\S]*\}/)
-  if (!match) {
-    return null
-  }
-  try {
-    const parsed = JSON.parse(match[0])
-    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null
-  } catch {
-    return null
-  }
-}
-
 async function translateTitleToEnglishSlug(title: string, workspace: string): Promise<string> {
   let serverClose: (() => void) | undefined
   let disposeInstance: (() => Promise<void>) | undefined
@@ -70,8 +47,8 @@ async function translateTitleToEnglishSlug(title: string, workspace: string): Pr
     disposeInstance = async () => {
       try {
         await started.client.instance.dispose()
-      } catch {
-        // ignore
+      } catch (error) {
+        console.warn("Failed to dispose OpenCode client while generating worktree slug:", error)
       }
     }
 
@@ -115,7 +92,7 @@ async function translateTitleToEnglishSlug(title: string, workspace: string): Pr
       .join("")
       .trim()
 
-    const parsed = extractFirstObject(textOutput)
+    const parsed = extractFirstJsonObject(textOutput)
     if (!parsed) {
       throw new Error("slug output did not contain valid JSON")
     }
@@ -194,8 +171,8 @@ export async function buildWorktreeName(
     try {
       const llmSlug = await translateTitleToEnglishSlug(trimmedTitle, options.workspace)
       slug = slugifyAscii(llmSlug)
-    } catch {
-      // ignore and fall back to rule-based translation below
+    } catch (error) {
+      console.warn("Failed to generate English slug with OpenCode, falling back to rule-based slug:", error)
     }
   }
 
