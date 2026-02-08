@@ -1,16 +1,16 @@
-# Lucy Orchestrator (TypeScript)
+# Lucy Orchestrator（TypeScript）
 
-Feishu-first coding orchestrator built around OpenCode SDK.
+面向飞书（Feishu）的编码编排器，基于 OpenCode SDK 构建。
 
-## What It Does
+## 功能概览
 
-- Receives requirements from Feishu.
-- Runs explicit state machine: `NEW -> CLARIFYING -> WAIT_APPROVAL -> RUNNING -> TESTING -> DONE/FAILED`.
-- Uses OpenCode for clarify/build/test execution.
-- Supports task-level git worktree isolation and optional Docker execution.
-- Supports both webhook callback mode and long-connection (WebSocket) mode.
+- 从飞书接收需求。
+- 运行显式状态机：`NEW -> CLARIFYING -> WAIT_APPROVAL -> RUNNING -> TESTING -> DONE/FAILED`。
+- 使用 OpenCode 执行澄清 / 构建 / 测试。
+- 支持以任务为粒度的 git worktree 隔离，并可选使用 Docker 执行。
+- 同时支持 webhook 回调模式与长连接（WebSocket）模式。
 
-## Quickstart
+## 快速开始
 
 ```bash
 npm install
@@ -18,34 +18,34 @@ npm run build
 npm test
 ```
 
-Run CLI directly in dev mode:
+开发模式下直接运行 CLI：
 
 ```bash
 npm run dev -- --help
 ```
 
-## Typical Flow
+## 典型流程
 
 ```bash
-# 1) init local config (optional: import Feishu credentials from nanobot)
+# 1) 初始化本地配置（可选：从 nanobot 导入飞书凭证）
 npm run dev -- config-init --from-nanobot
 
-# 2) create task
+# 2) 创建任务
 npm run dev -- create \
-  --title "Add retry policy" \
-  --description "Implement retry guard for failed tasks" \
+  --title "增加重试策略" \
+  --description "为失败任务实现重试保护" \
   --chat-id "oc_xxx" \
   --user-id "ou_xxx"
 
-# 3) clarify / approve / run
+# 3) 澄清 / 同意 / 运行
 npm run dev -- clarify --task-id <TASK_ID>
 npm run dev -- approval-message --task-id <TASK_ID> --user-id "ou_xxx" --text "同意，开始吧"
 npm run dev -- run --task-id <TASK_ID>
 ```
 
-## Feishu Integration
+## 飞书集成
 
-Single event processing:
+单次事件处理：
 
 ```bash
 npm run dev -- feishu-message \
@@ -53,7 +53,7 @@ npm run dev -- feishu-message \
   --repo-name lucy-code
 ```
 
-Webhook server:
+Webhook 服务：
 
 ```bash
 npm run dev -- serve-feishu-webhook \
@@ -65,7 +65,7 @@ npm run dev -- serve-feishu-webhook \
   --send-reply
 ```
 
-Long-connection server (no public callback URL needed):
+长连接服务（无需公网回调 URL）：
 
 ```bash
 npm run dev -- serve-feishu-longconn \
@@ -75,19 +75,19 @@ npm run dev -- serve-feishu-longconn \
   --send-reply
 ```
 
-Interaction note:
+交互说明：
 
-- If you just ask a question, the bot will not immediately create a task.
-- Reply with a natural confirmation (e.g. "好，帮我做" / "开始"), or prefix your message with `需求:` to create a task explicitly.
+- 如果你只是提问，机器人不会立即创建任务。
+- 用自然语言确认（例如 "好，帮我做" / "开始"）回复，或在消息前加 `需求:` 来显式创建任务。
 
-## OpenCode Drivers
+## OpenCode 驱动
 
-- Default: `sdk` (official `@opencode-ai/sdk`)
-- Fallback: `cli` (`--opencode-driver cli`)
+- 默认：`sdk`（官方 `@opencode-ai/sdk`）
+- 兜底：`cli`（`--opencode-driver cli`）
 
-The SDK path runs through `scripts/opencode_sdk_bridge.mjs` to keep one-shot commands deterministic.
+SDK 路径会经过 `scripts/opencode_sdk_bridge.mjs`，以保证一次性命令的可复现与确定性。
 
-Docker mode (for CLI fallback and test commands):
+Docker 模式（用于 CLI 兜底与测试命令）：
 
 ```bash
 npm run dev -- \
@@ -97,7 +97,7 @@ npm run dev -- \
   run --task-id <TASK_ID>
 ```
 
-## Layout
+## 目录结构
 
 ```text
 src/
