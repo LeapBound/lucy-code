@@ -5,7 +5,7 @@ import { afterEach, describe, expect, test } from "vitest"
 
 import { Orchestrator } from "../src/orchestrator.js"
 import { TaskStore } from "../src/store.js"
-import { StepStatus, StepType, TaskState, type Task } from "../src/models.js"
+import { QuestionStatus, StepStatus, StepType, TaskState, type Task } from "../src/models.js"
 import type { BuildExecutionResult, ClarifyResult, OpenCodeClient, TestExecutionResult } from "../src/adapters/opencode.js"
 import { FeishuConversationStore } from "../src/channels/feishu-conversation.js"
 
@@ -270,6 +270,44 @@ describe("orchestrator", () => {
     expect(result.task?.taskId).toBe(task.taskId)
     expect(result.replyText).toContain(`任务 ${task.taskId} 当前状态：`)
     expect(result.replyText).toContain("下一步建议：")
+  })
+
+  test("includes pending question preview in WAIT_APPROVAL status", async () => {
+    const { orchestrator, store } = await newHarness(0)
+    let task = await orchestrator.createTask({
+      title: "Task",
+      description: "Implement",
+      source: { type: "feishu", userId: "ou_1", chatId: "oc_1", messageId: "m1" },
+      repo: { name: "repo", baseBranch: "main", worktreePath: ".", branch: null },
+    })
+    task = await orchestrator.clarifyTask(task.taskId)
+
+    task.plan = {
+      ...(task.plan as NonNullable<typeof task.plan>),
+      questions: [
+        {
+          id: "q_scope",
+          question: "需要支持旧版 API 吗？",
+          required: true,
+          status: QuestionStatus.OPEN,
+          answer: null,
+        },
+      ],
+    }
+    await store.save(task)
+
+    const result = await orchestrator.processFeishuMessage({
+      requirement: {
+        userId: "ou_1",
+        chatId: "oc_1",
+        messageId: "m2",
+        text: "状态",
+      },
+      repoName: "repo",
+    })
+
+    expect(result.replyText).toContain("待确认问题（q_scope）")
+    expect(result.replyText).toContain("直接回复上面这个问题的答案")
   })
 
   test("returns draft guidance when no task but draft exists and user asks status", async () => {

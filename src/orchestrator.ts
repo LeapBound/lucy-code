@@ -775,6 +775,17 @@ export class Orchestrator {
       `任务 ${task.taskId} 当前状态：${task.state}`,
       `已尝试次数：${task.execution.attempt}/${task.execution.maxAttempts}`,
     ]
+
+    if (task.state === TaskState.WAIT_APPROVAL) {
+      const openQuestions = openRequiredQuestions(task)
+      if (openQuestions.length > 0) {
+        const nextQuestion = openQuestions[0]
+        lines.push(
+          `待确认问题（${nextQuestion.id}）：${nextQuestion.question}`,
+        )
+      }
+    }
+
     if (task.execution.lastError) {
       lines.push(`最近错误：${task.execution.lastError}`)
     }
@@ -786,7 +797,7 @@ export class Orchestrator {
     if (task.state === TaskState.WAIT_APPROVAL) {
       const openQuestions = openRequiredQuestions(task)
       if (openQuestions.length > 0) {
-        return "直接回复上一个问题的答案。"
+        return "直接回复上面这个问题的答案；如果不再继续可回复“取消/暂停”。"
       }
       return "回复“开始/继续”批准执行，或回复“取消/暂停”。"
     }
