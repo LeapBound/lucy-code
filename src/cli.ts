@@ -1,6 +1,6 @@
 import { Command } from "commander"
 
-import { mkdir, writeFile } from "node:fs/promises"
+import { mkdir, rename, writeFile } from "node:fs/promises"
 import { dirname, resolve } from "node:path"
 import { createHash } from "node:crypto"
 
@@ -618,7 +618,9 @@ export async function main(): Promise<void> {
           data: output,
         }
         await mkdir(dirname(reportPath), { recursive: true })
-        await writeFile(reportPath, `${JSON.stringify(reportEnvelope, null, 2)}\n`, "utf-8")
+        const tempPath = `${reportPath}.tmp-${process.pid}-${Date.now()}`
+        await writeFile(tempPath, `${JSON.stringify(reportEnvelope, null, 2)}\n`, "utf-8")
+        await rename(tempPath, reportPath)
       }
 
       printJson(output)

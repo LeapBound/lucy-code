@@ -96,6 +96,8 @@ describe("TaskStore", () => {
     expect(result.matched).toBe(1)
     expect(result.deleted).toBe(1)
     expect(result.skippedActiveState).toBe(1)
+    expect(result.matchedByState).toEqual({ DONE: 1 })
+    expect(result.deletedByState).toEqual({ DONE: 1 })
     const tasks = await store.list()
     expect(tasks.some((task) => task.taskId === oldDone.taskId)).toBe(false)
     expect(tasks.some((task) => task.taskId === oldRunning.taskId)).toBe(true)
@@ -118,6 +120,8 @@ describe("TaskStore", () => {
     const result = await store.prune({ olderThanHours: 24, states: ["DONE"], dryRun: true })
     expect(result.matched).toBe(1)
     expect(result.deleted).toBe(0)
+    expect(result.matchedByState).toEqual({ DONE: 1 })
+    expect(result.deletedByState).toEqual({})
 
     const loaded = await store.get(task.taskId)
     expect(loaded.taskId).toBe(task.taskId)
@@ -225,6 +229,8 @@ describe("TaskStore", () => {
 
     expect(result.matched).toBe(1)
     expect(result.taskIds).toEqual([highAttempt.taskId])
+    expect(result.matchedByState).toEqual({ FAILED: 1 })
+    expect(result.deletedByState).toEqual({ FAILED: 1 })
     const remaining = await store.list()
     expect(remaining.some((task) => task.taskId === lowAttempt.taskId)).toBe(true)
   })

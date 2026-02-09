@@ -84,6 +84,8 @@ export class TaskStore {
     matched: number
     deleted: number
     skippedActiveState: number
+    matchedByState: Record<string, number>
+    deletedByState: Record<string, number>
     taskIds: string[]
     preview: Array<{ taskId: string; state: string; title: string; updatedAt: string; attempts: number }>
   }> {
@@ -136,6 +138,7 @@ export class TaskStore {
 
     matchedEntries.sort((a, b) => a.task.updatedAt.localeCompare(b.task.updatedAt))
     const selected = limit ? matchedEntries.slice(0, limit) : matchedEntries
+    const matchedByState = summarizeByState(selected.map((entry) => entry.task.state))
 
     if (!input.dryRun) {
       for (let index = 0; index < selected.length; index += batchSize) {
@@ -144,11 +147,15 @@ export class TaskStore {
       }
     }
 
+    const deletedByState = input.dryRun ? {} : matchedByState
+
     return {
       scanned,
       matched: selected.length,
       deleted: input.dryRun ? 0 : selected.length,
       skippedActiveState,
+      matchedByState,
+      deletedByState,
       taskIds: selected.map((entry) => entry.task.taskId),
       preview: selected.slice(0, previewCount).map((entry) => ({
         taskId: entry.task.taskId,
@@ -173,4 +180,12 @@ export class TaskStore {
       }
     }
   }
+}
+
+function summarizeByState(states: string[]): Record<string, number> {
+  const summary: Record<string, number> = {}
+  for (const state of states) {
+    summary[state] = (summary[state] ?? 0) + 1
+  }
+  return summary
 }
