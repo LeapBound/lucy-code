@@ -34,6 +34,7 @@ import type { TaskEvent } from "./container-ws.js"
 import type { FeishuRequirement } from "./channels/feishu.js"
 import { FeishuConversationStore } from "./channels/feishu-conversation.js"
 import { logError } from "./logger.js"
+import { orchestratorMetrics } from "./metrics.js"
 
 export interface OrchestratorOptions {
   reportDir?: string
@@ -69,6 +70,7 @@ export class Orchestrator {
   }
 
   private async handleContainerEvent(event: TaskEvent): Promise<void> {
+    const startedAt = Date.now()
     try {
       const task = await this.store.get(event.taskId)
       recordTaskEvent(task, event.type, typeof event.payload.message === "string" ? event.payload.message : "Container event received", event.payload)
@@ -79,8 +81,14 @@ export class Orchestrator {
         const message = this.formatRealtimeStatus(event)
         await this.options.feishuMessenger.sendText(task.source.chatId, message)
       }
+      orchestratorMetrics.increment("container_event_total", { outcome: "success", type: event.type })
     } catch (error) {
       logError("Failed to handle container event", error, { taskId: event.taskId, phase: "container.event" })
+      orchestratorMetrics.increment("container_event_total", { outcome: "failure", type: event.type })
+    } finally {
+      orchestratorMetrics.observeDurationMs("container_event_duration_ms", Date.now() - startedAt, {
+        type: event.type,
+      })
     }
   }
 
@@ -107,9 +115,12 @@ export class Orchestrator {
     source: TaskSource
     repo: RepoContext
   }): Promise<Task> {
+    const startedAt = Date.now()
     const task = newTask(input)
     recordTaskEvent(task, "task.created", "Task created")
     await this.store.save(task)
+    orchestratorMetrics.increment("task_created_total")
+    orchestratorMetrics.observeDurationMs("task_create_duration_ms", Date.now() - startedAt)
     return task
   }
 
@@ -140,20 +151,28 @@ export class Orchestrator {
   }
 
   async clarifyTask(taskId: string): Promise<Task> {
+    const startedAt = Date.now()
     const task = await this.store.get(taskId)
     transition(task, TaskState.CLARIFYING, "state.change", "Entering CLARIFYING")
+    try {
+      const clarifyResult = await this.opencodeClient.clarify(task)
+      task.plan = clarifyResult.plan
+      task.artifacts.clarifySummary = clarifyResult.summary
+      recordTaskEvent(task, "clarify.completed", "Clarification completed", {
+        questions: task.plan.questions.length,
+        steps: task.plan.steps.length,
+      })
 
-    const clarifyResult = await this.opencodeClient.clarify(task)
-    task.plan = clarifyResult.plan
-    task.artifacts.clarifySummary = clarifyResult.summary
-    recordTaskEvent(task, "clarify.completed", "Clarification completed", {
-      questions: task.plan.questions.length,
-      steps: task.plan.steps.length,
-    })
-
-    transition(task, TaskState.WAIT_APPROVAL, "state.change", "Waiting for approval")
-    await this.store.save(task)
-    return task
+      transition(task, TaskState.WAIT_APPROVAL, "state.change", "Waiting for approval")
+      await this.store.save(task)
+      orchestratorMetrics.increment("clarify_total", { outcome: "success" })
+      return task
+    } catch (error) {
+      orchestratorMetrics.increment("clarify_total", { outcome: "failure", errorCode: errorCodeOf(error) })
+      throw error
+    } finally {
+      orchestratorMetrics.observeDurationMs("clarify_duration_ms", Date.now() - startedAt)
+    }
   }
 
   async approveTask(taskId: string, approvedBy: string): Promise<Task> {
@@ -247,6 +266,7 @@ export class Orchestrator {
   }
 
   async runTask(taskId: string): Promise<Task> {
+    const startedAt = Date.now()
     const task = await this.store.get(taskId)
     if (task.state === TaskState.FAILED && task.execution.attempt >= task.execution.maxAttempts) {
       throw new OrchestratorError(
@@ -256,6 +276,7 @@ export class Orchestrator {
 
     task.execution.attempt += 1
     recordTaskEvent(task, "run.started", "Task run started", { attempt: task.execution.attempt })
+    orchestratorMetrics.increment("run_total", { outcome: "started" })
 
     try {
       transition(task, TaskState.RUNNING, "state.change", "Entering RUNNING")
@@ -362,10 +383,14 @@ export class Orchestrator {
         errorCode: errorCodeOf(error),
       })
       await this.store.save(task)
+      orchestratorMetrics.increment("run_total", { outcome: "failed", errorCode: errorCodeOf(error) })
       throw error
+    } finally {
+      orchestratorMetrics.observeDurationMs("run_duration_ms", Date.now() - startedAt)
     }
 
     await this.store.save(task)
+    orchestratorMetrics.increment("run_total", { outcome: "succeeded", finalState: task.state })
     return task
   }
 
