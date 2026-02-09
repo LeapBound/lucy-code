@@ -36,25 +36,32 @@ interface GlobalOptions {
   artifactDir: string
   reportDir: string
   workspace: string
-  opencodeDriver: "sdk" | "cli"
+  opencodeDriver: "sdk" | "cli" | "container-sdk"
   opencodeNodeCommand: string
   opencodeSdkScript: string
   opencodeCommand: string
   opencodeTimeout: number
   opencodeUseDocker: boolean
   opencodeDockerImage: string
+  opencodeDockerUser?: string
+  opencodeDockerNetwork?: string
+  opencodeDockerPidsLimit?: number
+  opencodeDockerMemory?: string
+  opencodeDockerCpus?: string
+  opencodeDockerReadOnlyRootFs: boolean
+  opencodeDockerTmpfs?: string
   opencodePlanAgent: string
   opencodeBuildAgent: string
   opencodeSdkBaseUrl?: string
   opencodeSdkHostname: string
   opencodeSdkPort: number
-    opencodeSdkTimeoutMs: number
-    opencodeWsServerHost: string
-    opencodeWsServerPort: number
-    intentMode: "rules" | "llm" | "hybrid"
-    intentAgent: string
-    intentConfidenceThreshold: number
-  }
+  opencodeSdkTimeoutMs: number
+  opencodeWsServerHost: string
+  opencodeWsServerPort: number
+  intentMode: "rules" | "llm" | "hybrid"
+  intentAgent: string
+  intentConfidenceThreshold: number
+}
 
 function buildOrchestrator(options: GlobalOptions): Orchestrator {
   const store = new TaskStore(options.storeDir)
@@ -66,6 +73,13 @@ function buildOrchestrator(options: GlobalOptions): Orchestrator {
     command: options.opencodeCommand,
     useDocker: options.opencodeUseDocker,
     dockerImage: options.opencodeDockerImage,
+    dockerUser: options.opencodeDockerUser,
+    dockerNetwork: options.opencodeDockerNetwork,
+    dockerPidsLimit: options.opencodeDockerPidsLimit,
+    dockerMemory: options.opencodeDockerMemory,
+    dockerCpus: options.opencodeDockerCpus,
+    dockerReadOnlyRootFs: options.opencodeDockerReadOnlyRootFs,
+    dockerTmpfs: options.opencodeDockerTmpfs,
     workspace: options.workspace,
     timeoutSec: options.opencodeTimeout,
     planAgent: options.opencodePlanAgent,
@@ -74,6 +88,8 @@ function buildOrchestrator(options: GlobalOptions): Orchestrator {
     sdkHostname: options.opencodeSdkHostname,
     sdkPort: options.opencodeSdkPort,
     sdkTimeoutMs: options.opencodeSdkTimeoutMs,
+    wsServerHost: options.opencodeWsServerHost,
+    wsServerPort: options.opencodeWsServerPort,
   })
 
   const ruleClassifier = new RuleBasedIntentClassifier()
@@ -126,7 +142,7 @@ export async function main(): Promise<void> {
     .option("--artifact-dir <path>", "Artifact directory", ".orchestrator/artifacts")
     .option("--report-dir <path>", "Report directory", ".orchestrator/reports")
     .option("--workspace <path>", "Workspace path", process.cwd())
-     .option("--opencode-driver <driver>", "OpenCode driver (sdk|cli|container-sdk)", "sdk")
+    .option("--opencode-driver <driver>", "OpenCode driver (sdk|cli|container-sdk)", "sdk")
     .option("--opencode-node-command <bin>", "Node runtime for SDK bridge", "node")
     .option(
       "--opencode-sdk-script <path>",
@@ -137,6 +153,14 @@ export async function main(): Promise<void> {
     .option("--opencode-timeout <sec>", "OpenCode command timeout in seconds", "900")
     .option("--opencode-use-docker", "Run OpenCode/tests in Docker", false)
     .option("--opencode-docker-image <image>", "Docker image", "nanobot-opencode")
+    .option("--opencode-docker-user <uid:gid>", "Docker container user (default: current user)")
+    .option("--opencode-docker-network <name>", "Docker network")
+    .option("--opencode-docker-pids-limit <num>", "Docker pids limit")
+    .option("--opencode-docker-memory <mem>", "Docker memory limit, e.g. 2g")
+    .option("--opencode-docker-cpus <num>", "Docker CPU limit, e.g. 2")
+    .option("--opencode-docker-read-only-root-fs", "Enable Docker read-only root filesystem", true)
+    .option("--no-opencode-docker-read-only-root-fs", "Disable Docker read-only root filesystem")
+    .option("--opencode-docker-tmpfs <spec>", "Docker tmpfs spec", "/tmp:rw,noexec,nosuid,size=64m")
     .option("--opencode-plan-agent <name>", "Plan agent name", "plan")
     .option("--opencode-build-agent <name>", "Build agent name", "build")
     .option("--opencode-sdk-base-url <url>", "Connect to existing OpenCode server")
@@ -534,20 +558,53 @@ export async function main(): Promise<void> {
   await program.parseAsync(process.argv)
 }
 
-function normalizeOptions(raw: Record<string, unknown>): GlobalOptions {
+export function normalizeOptions(raw: Record<string, unknown>): GlobalOptions {
   return {
     config: String(raw.config ?? DEFAULT_CONFIG_PATH),
     storeDir: String(raw.storeDir ?? ".orchestrator/tasks"),
     artifactDir: String(raw.artifactDir ?? ".orchestrator/artifacts"),
     reportDir: String(raw.reportDir ?? ".orchestrator/reports"),
     workspace: String(raw.workspace ?? process.cwd()),
-    opencodeDriver: raw.opencodeDriver === "cli" ? "cli" : "sdk",
+    opencodeDriver:
+      raw.opencodeDriver === "cli" || raw.opencodeDriver === "container-sdk"
+        ? raw.opencodeDriver
+        : "sdk",
     opencodeNodeCommand: String(raw.opencodeNodeCommand ?? "node"),
     opencodeSdkScript: String(raw.opencodeSdkScript ?? "scripts/opencode_sdk_bridge.mjs"),
     opencodeCommand: String(raw.opencodeCommand ?? "opencode"),
     opencodeTimeout: Number(raw.opencodeTimeout ?? 900),
     opencodeUseDocker: Boolean(raw.opencodeUseDocker),
     opencodeDockerImage: String(raw.opencodeDockerImage ?? "nanobot-opencode"),
+    opencodeDockerUser:
+      typeof raw.opencodeDockerUser === "string" && raw.opencodeDockerUser.trim()
+        ? raw.opencodeDockerUser.trim()
+        : undefined,
+    opencodeDockerNetwork:
+      typeof raw.opencodeDockerNetwork === "string" && raw.opencodeDockerNetwork.trim()
+        ? raw.opencodeDockerNetwork.trim()
+        : undefined,
+    opencodeDockerPidsLimit:
+      typeof raw.opencodeDockerPidsLimit === "string" || typeof raw.opencodeDockerPidsLimit === "number"
+        ? Number(raw.opencodeDockerPidsLimit)
+        : undefined,
+    opencodeDockerMemory:
+      typeof raw.opencodeDockerMemory === "string" && raw.opencodeDockerMemory.trim()
+        ? raw.opencodeDockerMemory.trim()
+        : undefined,
+    opencodeDockerCpus:
+      typeof raw.opencodeDockerCpus === "string" && raw.opencodeDockerCpus.trim()
+        ? raw.opencodeDockerCpus.trim()
+        : undefined,
+    opencodeDockerReadOnlyRootFs:
+      typeof raw.opencodeDockerReadOnlyRootFs === "boolean"
+        ? raw.opencodeDockerReadOnlyRootFs
+        : raw.opencodeDockerReadOnlyRootFs === "false"
+          ? false
+          : true,
+    opencodeDockerTmpfs:
+      typeof raw.opencodeDockerTmpfs === "string" && raw.opencodeDockerTmpfs.trim()
+        ? raw.opencodeDockerTmpfs.trim()
+        : undefined,
     opencodePlanAgent: String(raw.opencodePlanAgent ?? "plan"),
     opencodeBuildAgent: String(raw.opencodeBuildAgent ?? "build"),
     opencodeSdkBaseUrl:
@@ -556,14 +613,14 @@ function normalizeOptions(raw: Record<string, unknown>): GlobalOptions {
         : undefined,
     opencodeSdkHostname: String(raw.opencodeSdkHostname ?? "127.0.0.1"),
     opencodeSdkPort: Number(raw.opencodeSdkPort ?? 0),
-     opencodeSdkTimeoutMs: Number(raw.opencodeSdkTimeoutMs ?? 5000),
-     opencodeWsServerHost: String(raw.opencodeWsServerHost ?? "host.docker.internal"),
-     opencodeWsServerPort: Number(raw.opencodeWsServerPort ?? 18791),
-     intentMode:
-       raw.intentMode === "llm" || raw.intentMode === "hybrid" ? raw.intentMode : "rules",
-     intentAgent: String(raw.intentAgent ?? "plan"),
-     intentConfidenceThreshold: Number(raw.intentConfidenceThreshold ?? 0.8),
-   }
+    opencodeSdkTimeoutMs: Number(raw.opencodeSdkTimeoutMs ?? 5000),
+    opencodeWsServerHost: String(raw.opencodeWsServerHost ?? "host.docker.internal"),
+    opencodeWsServerPort: Number(raw.opencodeWsServerPort ?? 18791),
+    intentMode:
+      raw.intentMode === "llm" || raw.intentMode === "hybrid" ? raw.intentMode : "rules",
+    intentAgent: String(raw.intentAgent ?? "plan"),
+    intentConfidenceThreshold: Number(raw.intentConfidenceThreshold ?? 0.8),
+  }
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
