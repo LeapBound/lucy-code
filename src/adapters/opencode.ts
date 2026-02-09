@@ -1,8 +1,7 @@
-import { exec as execCallback, spawnSync } from "node:child_process"
+import { spawnSync, type SpawnSyncReturns } from "node:child_process"
 import { mkdirSync } from "node:fs"
 import { writeFile } from "node:fs/promises"
 import { resolve } from "node:path"
-import { promisify } from "node:util"
 
 import { OpenCodeInvocationError } from "../errors.js"
 import { extractFirstJsonObject, tryParseJsonObject } from "../json-utils.js"
@@ -17,8 +16,6 @@ import {
   type Task,
   utcNowIso,
 } from "../models.js"
-
-const exec = promisify(execCallback)
 
 export interface ClarifyResult {
   summary: string
@@ -44,6 +41,9 @@ export interface TestExecutionResult {
 export interface OpenCodeRunResult {
   agent: string
   returnCode: number
+  executionMode: "host" | "docker" | "container-sdk"
+  timedOut: boolean
+  signal: string | null
   events: Array<Record<string, unknown>>
   text: string
   usage: Record<string, number>
@@ -64,6 +64,13 @@ export interface OpenCodeRuntimeOptions {
   useDocker?: boolean
   dockerImage?: string
   workspace?: string
+  dockerUser?: string
+  dockerNetwork?: string
+  dockerPidsLimit?: number
+  dockerMemory?: string
+  dockerCpus?: string
+  dockerReadOnlyRootFs?: boolean
+  dockerTmpfs?: string
   timeoutSec?: number
   planAgent?: string
   buildAgent?: string
@@ -83,7 +90,13 @@ export class OpenCodeRuntimeClient implements OpenCodeClient {
   private readonly command: string
   private readonly useDocker: boolean
   private readonly dockerImage: string
-  private readonly workspace?: string
+  private readonly dockerUser?: string
+  private readonly dockerNetwork?: string
+  private readonly dockerPidsLimit?: number
+  private readonly dockerMemory?: string
+  private readonly dockerCpus?: string
+  private readonly dockerReadOnlyRootFs: boolean
+  private readonly dockerTmpfs?: string
   private readonly timeoutSec: number
   private readonly planAgent: string
   private readonly buildAgent: string
@@ -103,7 +116,13 @@ export class OpenCodeRuntimeClient implements OpenCodeClient {
     this.command = options.command ?? "opencode"
     this.useDocker = options.useDocker ?? false
     this.dockerImage = options.dockerImage ?? "nanobot-opencode"
-    this.workspace = this.normalizeWorkspacePath(options.workspace)
+    this.dockerUser = options.dockerUser ?? this.detectHostUser()
+    this.dockerNetwork = options.dockerNetwork
+    this.dockerPidsLimit = options.dockerPidsLimit
+    this.dockerMemory = options.dockerMemory
+    this.dockerCpus = options.dockerCpus
+    this.dockerReadOnlyRootFs = options.dockerReadOnlyRootFs ?? true
+    this.dockerTmpfs = options.dockerTmpfs ?? "/tmp:rw,noexec,nosuid,size=64m"
     this.timeoutSec = options.timeoutSec ?? 900
     this.planAgent = options.planAgent ?? "plan"
     this.buildAgent = options.buildAgent ?? "build"
@@ -115,13 +134,6 @@ export class OpenCodeRuntimeClient implements OpenCodeClient {
     this.sdkScript = resolve(options.sdkScript ?? "scripts/opencode_sdk_bridge.mjs")
     this.wsServerHost = options.wsServerHost ?? "host.docker.internal"
     this.wsServerPort = options.wsServerPort ?? 18791
-  }
-
-  private normalizeWorkspacePath(workspacePath?: string): string | undefined {
-    if (!workspacePath) {
-      return undefined
-    }
-    return resolve(workspacePath)
   }
 
   async clarify(task: Task): Promise<ClarifyResult> {
@@ -181,49 +193,35 @@ export class OpenCodeRuntimeClient implements OpenCodeClient {
     const workspace = this.resolveWorkspace(task)
     const startedAt = Date.now()
 
-    let finalCommand = command
-    if (this.useDocker && !this.shouldForceHostTestExecution(command)) {
-      finalCommand = [
-        "docker",
-        "run",
-        "--rm",
-        "-v",
-        `${workspace}:/workspace`,
-        "-w",
-        "/workspace",
-        this.dockerImage,
-        "/bin/sh",
-        "-lc",
-        command,
-      ].join(" ")
-    }
+    const useDockerRunner = this.useDocker && !this.shouldForceHostTestExecution(command)
+    const runner = useDockerRunner
+      ? this.buildDockerRunCommand(task.taskId, workspace, [this.dockerImage, "/bin/sh", "-lc", command])
+      : {
+          executable: "/bin/sh",
+          args: ["-lc", command],
+          cwd: workspace,
+        }
 
-    let exitCode = 1
-    let stdout = ""
-    let stderr = ""
+    const result = spawnSync(runner.executable, runner.args, {
+      cwd: runner.cwd,
+      encoding: "utf-8",
+      timeout: this.timeoutSec * 1000,
+      maxBuffer: 10 * 1024 * 1024,
+    })
 
-    try {
-      const output = await exec(finalCommand, {
-        cwd: workspace,
-        timeout: this.timeoutSec * 1000,
-        maxBuffer: 10 * 1024 * 1024,
-      })
-      exitCode = 0
-      stdout = output.stdout
-      stderr = output.stderr
-    } catch (error) {
-      const details = error as { code?: number; stdout?: string; stderr?: string; message?: string; killed?: boolean }
-      exitCode = typeof details.code === "number" ? details.code : details.killed ? 124 : 1
-      stdout = details.stdout ?? ""
-      stderr = details.stderr ?? details.message ?? ""
-    }
+    const timedOut = Boolean(result.error && /timed?\s*out|ETIMEDOUT/i.test(result.error.message))
+    const exitCode = typeof result.status === "number" ? result.status : timedOut ? 124 : 1
+    const stdout = result.stdout ?? ""
+    const stderr = result.stderr ?? result.error?.message ?? ""
 
     const durationMs = Date.now() - startedAt
     const logPath = resolve(this.artifactRoot, `${task.taskId}_test.log`)
     await this.writeJson(logPath, {
       taskId: task.taskId,
       workspace,
+      executionMode: useDockerRunner ? "docker" : "host",
       command,
+      runtimeCommand: [runner.executable, ...runner.args].join(" "),
       exitCode,
       durationMs,
       stdout,
@@ -302,6 +300,9 @@ export class OpenCodeRuntimeClient implements OpenCodeClient {
         return {
           agent: params.agent,
           returnCode: result.status ?? 1,
+          executionMode: "host",
+          timedOut: false,
+          signal: result.signal ?? null,
           events: [],
           text: "",
           usage: {},
@@ -320,6 +321,9 @@ export class OpenCodeRuntimeClient implements OpenCodeClient {
         return {
           agent: params.agent,
           returnCode: result.status ?? 1,
+          executionMode: "host",
+          timedOut: false,
+          signal: result.signal ?? null,
           events: [],
           text: "",
           usage: {},
@@ -337,6 +341,9 @@ export class OpenCodeRuntimeClient implements OpenCodeClient {
       const runResult: OpenCodeRunResult = {
         agent: params.agent,
         returnCode: 0,
+        executionMode: "host",
+        timedOut: false,
+        signal: result.signal ?? null,
         events,
         text: typeof parsed.text === "string" ? parsed.text : this.extractTextFromEvents(events),
         usage: {
@@ -353,6 +360,9 @@ export class OpenCodeRuntimeClient implements OpenCodeClient {
       return {
         agent: params.agent,
         returnCode: 1,
+        executionMode: "host",
+        timedOut: false,
+        signal: null,
         events: [],
         text: "",
         usage: {},
@@ -388,21 +398,18 @@ import { createOpencode } from "@opencode-ai/sdk";
       parts: [{ type: "text", text: \`${params.prompt.replace(/`/g, '\\`')}\` }] 
     } 
   });
-  console.log(JSON.stringify(result));
+  process.stdout.write(JSON.stringify(result) + "\\n");
 })().catch(err => { 
-  console.error(err); 
+  const message = err instanceof Error ? err.message : String(err);
+  process.stderr.write(message + "\\n");
   process.exit(1); 
 });
     `.trim();
 
-    const containerCommand = [
-      "docker",
-      "run",
-      "--rm",
-      "-v",
-      `${params.workspace}:/workspace`,
-      "-w",
-      "/workspace",
+    const scriptPath = "/workspace/.lucy/opencode_task.mjs"
+    const shellCommand = this.buildContainerScriptCommand(scriptPath, scriptContent)
+
+    const containerCommand = this.buildDockerRunCommand(params.taskId, params.workspace, [
       "-e",
       `OPENCODE_WS_HOST=${this.wsServerHost}`,
       "-e",
@@ -412,13 +419,14 @@ import { createOpencode } from "@opencode-ai/sdk";
       this.dockerImage,
       "sh",
       "-c",
-      `echo '${scriptContent}' > /tmp/opencode_task.mjs && node /tmp/opencode_task.mjs`
-    ];
+      shellCommand,
+    ]);
 
-    const result = spawnSync(containerCommand[0], containerCommand.slice(1), {
+    const result = spawnSync(containerCommand.executable, containerCommand.args, {
       encoding: "utf-8",
       timeout: this.timeoutSec * 1000,
     });
+    const processState = this.inspectSpawnResult(result)
 
     const stdout = result.stdout ?? "";
     const stderr = result.stderr ?? "";
@@ -429,14 +437,17 @@ import { createOpencode } from "@opencode-ai/sdk";
 
     const runResult: OpenCodeRunResult = {
       agent: params.agent,
-      returnCode: result.status ?? 1,
+      returnCode: processState.returnCode,
+      executionMode: "container-sdk",
+      timedOut: processState.timedOut,
+      signal: processState.signal,
       events,
       text,
       usage,
       stderr,
       error,
     };
-    await this.writeAgentLog(params.taskId, containerCommand, params.workspace, runResult, stdout);
+    await this.writeAgentLog(params.taskId, [containerCommand.executable, ...containerCommand.args], params.workspace, runResult, stdout);
     return runResult;
   }
 
@@ -456,24 +467,15 @@ import { createOpencode } from "@opencode-ai/sdk";
       params.prompt,
     ]
     const command = this.useDocker
-      ? [
-          "docker",
-          "run",
-          "--rm",
-          "-v",
-          `${params.workspace}:/workspace`,
-          "-w",
-          "/workspace",
-          this.dockerImage,
-          ...opencodeCommand,
-        ]
-      : opencodeCommand
+      ? this.buildDockerRunCommand(params.taskId, params.workspace, [this.dockerImage, ...opencodeCommand])
+      : { executable: opencodeCommand[0], args: opencodeCommand.slice(1), cwd: params.workspace }
 
-    const result = spawnSync(command[0], command.slice(1), {
-      cwd: this.useDocker ? undefined : params.workspace,
+    const result = spawnSync(command.executable, command.args, {
+      cwd: command.cwd,
       encoding: "utf-8",
       timeout: this.timeoutSec * 1000,
     })
+    const processState = this.inspectSpawnResult(result)
 
     const stdout = result.stdout ?? ""
     const stderr = result.stderr ?? ""
@@ -484,15 +486,97 @@ import { createOpencode } from "@opencode-ai/sdk";
 
     const runResult: OpenCodeRunResult = {
       agent: params.agent,
-      returnCode: result.status ?? 1,
+      returnCode: processState.returnCode,
+      executionMode: this.useDocker ? "docker" : "host",
+      timedOut: processState.timedOut,
+      signal: processState.signal,
       events,
       text,
       usage,
       stderr,
       error,
     }
-    await this.writeAgentLog(params.taskId, command, params.workspace, runResult, stdout)
+    await this.writeAgentLog(params.taskId, [command.executable, ...command.args], params.workspace, runResult, stdout)
     return runResult
+  }
+
+  private buildDockerRunCommand(
+    taskId: string,
+    workspace: string,
+    tailArgs: string[],
+  ): { executable: string; args: string[]; cwd?: string } {
+    const args = [
+      "run",
+      "--rm",
+      "--init",
+      "--label",
+      `lucy.task_id=${this.sanitizeDockerLabel(taskId)}`,
+      "--label",
+      "lucy.component=opencode",
+      "--label",
+      `lucy.image=${this.dockerImage}`,
+    ]
+
+    if (this.dockerReadOnlyRootFs) {
+      args.push("--read-only")
+      if (this.dockerTmpfs) {
+        args.push("--tmpfs", this.dockerTmpfs)
+      }
+    }
+
+    if (this.dockerUser) {
+      args.push("--user", this.dockerUser)
+    }
+    if (this.dockerNetwork) {
+      args.push("--network", this.dockerNetwork)
+    }
+    if (typeof this.dockerPidsLimit === "number" && this.dockerPidsLimit > 0) {
+      args.push("--pids-limit", String(this.dockerPidsLimit))
+    }
+    if (this.dockerMemory) {
+      args.push("--memory", this.dockerMemory)
+    }
+    if (this.dockerCpus) {
+      args.push("--cpus", this.dockerCpus)
+    }
+
+    args.push("-v", `${workspace}:/workspace`, "-w", "/workspace", ...tailArgs)
+    return { executable: "docker", args }
+  }
+
+  private sanitizeDockerLabel(value: string): string {
+    return value.replace(/[^a-zA-Z0-9_.-]/g, "_")
+  }
+
+  private buildContainerScriptCommand(scriptPath: string, scriptContent: string): string {
+    const marker = "__LUCY_OPENCODE_SCRIPT__"
+    return [
+      "mkdir -p /workspace/.lucy",
+      `cat > ${scriptPath} <<'${marker}'`,
+      scriptContent,
+      marker,
+      `node ${scriptPath}`,
+    ].join("\n")
+  }
+
+  private inspectSpawnResult(result: SpawnSyncReturns<string>): {
+    returnCode: number
+    timedOut: boolean
+    signal: string | null
+  } {
+    const timedOut = Boolean(result.error && /timed?\s*out|ETIMEDOUT/i.test(result.error.message))
+    return {
+      returnCode: typeof result.status === "number" ? result.status : timedOut ? 124 : 1,
+      timedOut,
+      signal: result.signal ?? null,
+    }
+  }
+
+  private detectHostUser(): string | undefined {
+    if (typeof process.getuid !== "function" || typeof process.getgid !== "function") {
+      return undefined
+    }
+    return `${process.getuid()}:${process.getgid()}`
   }
 
   private parseJsonlEvents(rawStdout: string): Array<Record<string, unknown>> {
@@ -871,6 +955,20 @@ import { createOpencode } from "@opencode-ai/sdk";
       workspace,
       command,
       returnCode: runResult.returnCode,
+      executionMode: runResult.executionMode,
+      timedOut: runResult.timedOut,
+      signal: runResult.signal,
+      container: {
+        enabled: runResult.executionMode !== "host",
+        image: this.dockerImage,
+        readOnlyRootFs: this.dockerReadOnlyRootFs,
+        tmpfs: this.dockerTmpfs ?? null,
+        user: this.dockerUser ?? null,
+        network: this.dockerNetwork ?? null,
+        pidsLimit: this.dockerPidsLimit ?? null,
+        memory: this.dockerMemory ?? null,
+        cpus: this.dockerCpus ?? null,
+      },
       usage: runResult.usage,
       error: runResult.error ?? null,
       text: runResult.text,
