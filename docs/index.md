@@ -11,8 +11,8 @@
 - (Pending) Add ADRs for persistence model and idempotency strategy.
 
 ## Runbooks
+- [Task Store Prune](./runbooks/task-store-prune.md)
 - (Pending) Add runbook for Feishu webhook/longconn incident handling.
-- (Pending) Add runbook for TaskStore cleanup and task recovery.
 
 ## Templates
 - (Pending) ADR template, incident report template.

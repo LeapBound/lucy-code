@@ -121,4 +121,40 @@ describe("TaskStore", () => {
     const loaded = await store.get(task.taskId)
     expect(loaded.taskId).toBe(task.taskId)
   })
+
+  test("supports prune limit and keeps newer matches", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lucy-task-store-"))
+    const store = new TaskStore(root)
+
+    const tasks = await Promise.all(
+      Array.from({ length: 4 }, async (_, index) => {
+        const task = newTask({
+          title: `Task-${index}`,
+          description: "desc",
+          source: { type: "feishu", userId: "u", chatId: "c", messageId: `m${index}` },
+          repo: { name: "repo", baseBranch: "main", worktreePath: ".", branch: `agent/${index}` },
+        })
+        task.state = TaskState.DONE
+        task.updatedAt = new Date(Date.now() - (index + 1) * 24 * 60 * 60 * 1000).toISOString()
+        await store.save(task)
+        return task
+      }),
+    )
+
+    const result = await store.prune({
+      olderThanHours: 1,
+      states: [TaskState.DONE],
+      limit: 2,
+      batchSize: 1,
+    })
+
+    expect(result.matched).toBe(2)
+    expect(result.deleted).toBe(2)
+
+    const remaining = await store.list()
+    expect(remaining.length).toBe(2)
+    const remainingIds = new Set(remaining.map((item) => item.taskId))
+    expect(remainingIds.has(tasks[0].taskId)).toBe(true)
+    expect(remainingIds.has(tasks[1].taskId)).toBe(true)
+  })
 })

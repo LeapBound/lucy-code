@@ -562,6 +562,8 @@ export async function main(): Promise<void> {
     .command("store-prune")
     .option("--older-than-hours <hours>", "Delete tasks older than hours", "168")
     .option("--states <csv>", "Task states to prune, comma-separated", "DONE,FAILED,CANCELLED")
+    .option("--limit <num>", "Maximum tasks to prune in this run")
+    .option("--batch-size <num>", "Delete batch size", "100")
     .option("--dry-run", "Only report matches without deleting", false)
     .action(async (commandOptions) => {
       const options = normalizeOptions(program.opts())
@@ -572,6 +574,11 @@ export async function main(): Promise<void> {
       const result = await new TaskStore(options.storeDir).prune({
         olderThanHours: Number(commandOptions.olderThanHours ?? 168),
         states,
+        limit:
+          typeof commandOptions.limit === "string" && commandOptions.limit.trim()
+            ? Number(commandOptions.limit)
+            : undefined,
+        batchSize: Number(commandOptions.batchSize ?? 100),
         dryRun: Boolean(commandOptions.dryRun),
       })
       printJson(result)
