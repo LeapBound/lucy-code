@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest"
 
-import { normalizeOptions } from "../src/cli.js"
+import { normalizeOptions, resolveStorePruneInput } from "../src/cli.js"
 
 describe("normalizeOptions", () => {
   test("supports container-sdk driver and docker isolation options", () => {
@@ -53,5 +53,39 @@ describe("normalizeOptions", () => {
     expect(options.opencodeSdkTimeoutMs).toBe(5000)
     expect(options.opencodeWsServerPort).toBe(18791)
     expect(options.intentConfidenceThreshold).toBe(0.8)
+  })
+
+  test("normalizes store-prune options with safe defaults", () => {
+    const input = resolveStorePruneInput({
+      olderThanHours: "bad",
+      olderThanDays: "",
+      states: "DONE, FAILED,",
+      limit: "x",
+      batchSize: "0",
+      minAttempts: "-1",
+      preview: "NaN",
+      includeRunning: true,
+      dryRun: true,
+    })
+
+    expect(input).toMatchObject({
+      olderThanHours: 168,
+      states: ["DONE", "FAILED"],
+      limit: null,
+      batchSize: 100,
+      minAttempts: null,
+      previewCount: 5,
+      includeRunning: true,
+      dryRun: true,
+    })
+  })
+
+  test("prefers older-than-days when provided", () => {
+    const input = resolveStorePruneInput({
+      olderThanHours: "12",
+      olderThanDays: "3",
+      states: "DONE",
+    })
+    expect(input.olderThanHours).toBe(72)
   })
 })

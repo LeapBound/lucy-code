@@ -576,51 +576,23 @@ export async function main(): Promise<void> {
     .action(async (commandOptions) => {
       const options = normalizeOptions(program.opts())
       const store = new TaskStore(options.storeDir)
-      const states = String(commandOptions.states ?? "")
-        .split(",")
-        .map((item: string) => item.trim())
-        .filter(Boolean)
-      const olderThanHours =
-        typeof commandOptions.olderThanDays === "string" && commandOptions.olderThanDays.trim()
-          ? Number(commandOptions.olderThanDays) * 24
-          : Number(commandOptions.olderThanHours ?? 168)
-      const limit =
-        typeof commandOptions.limit === "string" && commandOptions.limit.trim()
-          ? Number(commandOptions.limit)
-          : undefined
-      const batchSize = Number(commandOptions.batchSize ?? 100)
-      const minAttempts =
-        typeof commandOptions.minAttempts === "string" && commandOptions.minAttempts.trim()
-          ? Number(commandOptions.minAttempts)
-          : undefined
-      const previewCount = Number(commandOptions.preview ?? 5)
-      const dryRun = Boolean(commandOptions.dryRun)
-      const includeRunning = Boolean(commandOptions.includeRunning)
+      const pruneInput = resolveStorePruneInput(commandOptions)
 
       const beforeTasks = await store.list()
       const result = await store.prune({
-        olderThanHours,
-        states,
-        limit,
-        batchSize,
-        minAttempts,
-        dryRun,
-        allowActiveStates: includeRunning,
-        previewCount,
+        olderThanHours: pruneInput.olderThanHours,
+        states: pruneInput.states,
+        limit: pruneInput.limit ?? undefined,
+        batchSize: pruneInput.batchSize,
+        minAttempts: pruneInput.minAttempts ?? undefined,
+        dryRun: pruneInput.dryRun,
+        allowActiveStates: pruneInput.includeRunning,
+        previewCount: pruneInput.previewCount,
       })
-      const afterTasks = dryRun ? beforeTasks : await store.list()
+      const afterTasks = pruneInput.dryRun ? beforeTasks : await store.list()
 
       const output = {
-        input: {
-          olderThanHours,
-          states,
-          limit: limit ?? null,
-          batchSize,
-          minAttempts: minAttempts ?? null,
-          previewCount,
-          includeRunning,
-          dryRun,
-        },
+        input: pruneInput,
         before: {
           count: beforeTasks.length,
           byState: summarizeTasksByState(beforeTasks),
@@ -742,6 +714,35 @@ function summarizeTasksByState(tasks: Array<{ state: string }>): Record<string, 
     summary[task.state] = (summary[task.state] ?? 0) + 1
   }
   return summary
+}
+
+export function resolveStorePruneInput(commandOptions: Record<string, unknown>): {
+  olderThanHours: number
+  states: string[]
+  limit: number | null
+  batchSize: number
+  minAttempts: number | null
+  previewCount: number
+  includeRunning: boolean
+  dryRun: boolean
+} {
+  const states = String(commandOptions.states ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean)
+  const olderThanDays = parseOptionalPositiveNumber(commandOptions.olderThanDays)
+  const olderThanHours = olderThanDays ? olderThanDays * 24 : parsePositiveNumber(commandOptions.olderThanHours, 168)
+
+  return {
+    olderThanHours,
+    states,
+    limit: parseOptionalPositiveNumber(commandOptions.limit) ?? null,
+    batchSize: parsePositiveNumber(commandOptions.batchSize, 100),
+    minAttempts: parseOptionalPositiveNumber(commandOptions.minAttempts) ?? null,
+    previewCount: parsePositiveNumber(commandOptions.preview, 5),
+    includeRunning: Boolean(commandOptions.includeRunning),
+    dryRun: Boolean(commandOptions.dryRun),
+  }
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
