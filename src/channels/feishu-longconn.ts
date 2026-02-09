@@ -92,17 +92,27 @@ export class FeishuLongConnProcessor {
     })
 
     let replySent = false
+    let replyError: string | null = null
     const replyPlan = planFeishuReply(replyText)
-    if (this.settings.sendReply !== false && this.messenger) {
-      await this.messenger.sendText(chatId, replyText)
-      replySent = true
-    }
-
     await this.processedStore.add(messageId)
+    if (this.settings.sendReply !== false && this.messenger) {
+      try {
+        await this.messenger.sendText(chatId, replyText)
+        replySent = true
+      } catch (error) {
+        replyError = error instanceof Error ? error.message : String(error)
+        logError("Failed to send Feishu long-connection reply", error, {
+          phase: "longconn.reply-send",
+          messageId,
+          chatId,
+        })
+      }
+    }
     if (!task) {
       return {
         status: "draft",
         replySent,
+        replyError,
         replyParts: replyPlan.parts.length,
         replyTruncated: replyPlan.truncated,
       }
@@ -112,6 +122,7 @@ export class FeishuLongConnProcessor {
       taskId: task.taskId,
       taskState: task.state,
       replySent,
+      replyError,
       replyParts: replyPlan.parts.length,
       replyTruncated: replyPlan.truncated,
     }

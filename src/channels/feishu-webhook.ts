@@ -201,19 +201,30 @@ export class FeishuWebhookProcessor {
       })
 
       let replySent = false
+      let replyError: string | null = null
       const replyPlan = planFeishuReply(replyText)
+      await this.processedStore.add(requirement.messageId)
       if (this.settings.sendReply !== false && this.messenger) {
-        await this.messenger.sendText(requirement.chatId, replyText)
-        replySent = true
+        try {
+          await this.messenger.sendText(requirement.chatId, replyText)
+          replySent = true
+        } catch (error) {
+          replyError = error instanceof Error ? error.message : String(error)
+          logError("Failed to send Feishu webhook reply", error, {
+            phase: "webhook.reply-send",
+            messageId: requirement.messageId,
+            chatId: requirement.chatId,
+          })
+        }
       }
 
-      await this.processedStore.add(requirement.messageId)
       if (!task) {
         return {
           statusCode: 200,
           payload: {
             status: "draft",
             replySent,
+            replyError,
             replyParts: replyPlan.parts.length,
             replyTruncated: replyPlan.truncated,
           },
@@ -227,6 +238,7 @@ export class FeishuWebhookProcessor {
           taskId: task.taskId,
           taskState: task.state,
           replySent,
+          replyError,
           replyParts: replyPlan.parts.length,
           replyTruncated: replyPlan.truncated,
         },

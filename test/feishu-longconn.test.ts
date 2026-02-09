@@ -160,4 +160,47 @@ describe("FeishuLongConnProcessor", () => {
       }),
     )
   })
+
+  test("marks message processed even when reply sending fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lucy-longconn-test-"))
+    const processFeishuMessage = vi.fn().mockResolvedValue({
+      task: { taskId: "task_1", state: "WAIT_APPROVAL" },
+      replyText: "ok",
+    })
+    const sendText = vi.fn().mockRejectedValue(new Error("send failed"))
+
+    const processor = new FeishuLongConnProcessor(
+      { processFeishuMessage } as unknown as any,
+      {
+        repoName: "repo",
+        sendReply: true,
+      },
+      { sendText } as unknown as any,
+      new ProcessedMessageStore(join(root, "seen.json")),
+    )
+
+    const payload = {
+      sender: {
+        sender_id: { open_id: "ou_1" },
+        sender_type: "user",
+      },
+      message: {
+        message_id: "om_send_fail",
+        chat_id: "oc_1",
+        message_type: "text",
+        content: JSON.stringify({ text: "hello" }),
+      },
+    }
+
+    const first = await processor.handleMessageEvent(payload)
+    const second = await processor.handleMessageEvent(payload)
+
+    expect(first).toMatchObject({
+      status: "ok",
+      replySent: false,
+      replyError: "send failed",
+    })
+    expect(second.status).toBe("duplicate")
+    expect(processFeishuMessage).toHaveBeenCalledTimes(1)
+  })
 })

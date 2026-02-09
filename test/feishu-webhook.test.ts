@@ -85,6 +85,51 @@ describe("FeishuWebhookProcessor", () => {
     expect(result.payload.replyParts).toBe(5)
     expect(result.payload.replyTruncated).toBe(true)
   })
+
+  test("marks processed even when reply sending fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lucy-webhook-store-"))
+    const store = new ProcessedMessageStore(join(root, "seen.json"))
+    const processFeishuMessage = vi.fn().mockResolvedValue({
+      task: { taskId: "task_1", state: "WAIT_APPROVAL" },
+      replyText: "ok",
+    })
+    const messenger = {
+      sendText: vi.fn().mockRejectedValue(new Error("send failed")),
+    }
+
+    const processor = new FeishuWebhookProcessor(
+      { processFeishuMessage } as unknown as any,
+      { repoName: "repo", sendReply: true },
+      messenger as unknown as any,
+      store,
+    )
+
+    const payload = {
+      header: { event_type: "im.message.receive_v1" },
+      event: {
+        message: {
+          chat_id: "oc_1",
+          message_id: "om_send_fail",
+          content: JSON.stringify({ text: "hello" }),
+        },
+        sender: {
+          sender_id: { open_id: "ou_1" },
+        },
+      },
+    }
+
+    const first = await processor.processPayload(payload)
+    const second = await processor.processPayload(payload)
+
+    expect(first.statusCode).toBe(200)
+    expect(first.payload).toMatchObject({
+      status: "ok",
+      replySent: false,
+      replyError: "send failed",
+    })
+    expect(second.payload.status).toBe("duplicate")
+    expect(processFeishuMessage).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe("ProcessedMessageStore", () => {
