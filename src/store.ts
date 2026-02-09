@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises"
+import { mkdir, readdir, readFile, rename, unlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
 import { TaskNotFoundError } from "./errors.js"
@@ -60,6 +60,54 @@ export class TaskStore {
     }
 
     return tasks.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+  }
+
+  async prune(input: {
+    olderThanHours: number
+    states?: string[]
+    dryRun?: boolean
+  }): Promise<{ scanned: number; matched: number; deleted: number; taskIds: string[] }> {
+    await mkdir(this.rootDir, { recursive: true })
+    const names = await readdir(this.rootDir)
+    const cutoffMs = Date.now() - Math.max(0, input.olderThanHours) * 60 * 60 * 1000
+    const stateSet = input.states && input.states.length > 0 ? new Set(input.states) : null
+
+    let scanned = 0
+    const matchedTasks: Task[] = []
+
+    for (const fileName of names) {
+      if (!fileName.endsWith(".json")) {
+        continue
+      }
+      const path = join(this.rootDir, fileName)
+      scanned += 1
+      try {
+        const content = await readFile(path, "utf-8")
+        const task = parseTask(JSON.parse(content))
+        const updatedAtMs = Date.parse(task.updatedAt)
+        const isOldEnough = Number.isFinite(updatedAtMs) && updatedAtMs <= cutoffMs
+        const stateMatched = !stateSet || stateSet.has(task.state)
+        if (isOldEnough && stateMatched) {
+          matchedTasks.push(task)
+          if (!input.dryRun) {
+            await unlink(path)
+          }
+        }
+      } catch (error) {
+        logWarn("Skipping unreadable task file while pruning tasks", {
+          phase: "task-store.prune",
+          filePath: path,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+
+    return {
+      scanned,
+      matched: matchedTasks.length,
+      deleted: input.dryRun ? 0 : matchedTasks.length,
+      taskIds: matchedTasks.map((task) => task.taskId),
+    }
   }
 
   private async withTaskWriteLock<T>(taskId: string, operation: () => Promise<T>): Promise<T> {

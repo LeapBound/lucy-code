@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 
 import { describe, expect, test } from "vitest"
 
-import { newTask } from "../src/models.js"
+import { newTask, TaskState } from "../src/models.js"
 import { TaskStore } from "../src/store.js"
 
 describe("TaskStore", () => {
@@ -51,5 +51,74 @@ describe("TaskStore", () => {
     const tasks = await store.list()
     expect(tasks.length).toBe(1)
     expect(tasks[0].taskId).toBe(task.taskId)
+  })
+
+  test("prunes tasks by age and state", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lucy-task-store-"))
+    const store = new TaskStore(root)
+
+    const oldDone = newTask({
+      title: "old done",
+      description: "desc",
+      source: { type: "feishu", userId: "u", chatId: "c", messageId: "m1" },
+      repo: { name: "repo", baseBranch: "main", worktreePath: ".", branch: "agent/1" },
+    })
+    oldDone.state = TaskState.DONE
+    oldDone.updatedAt = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString()
+
+    const oldRunning = newTask({
+      title: "old running",
+      description: "desc",
+      source: { type: "feishu", userId: "u", chatId: "c", messageId: "m2" },
+      repo: { name: "repo", baseBranch: "main", worktreePath: ".", branch: "agent/2" },
+    })
+    oldRunning.state = TaskState.RUNNING
+    oldRunning.updatedAt = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString()
+
+    const freshDone = newTask({
+      title: "fresh done",
+      description: "desc",
+      source: { type: "feishu", userId: "u", chatId: "c", messageId: "m3" },
+      repo: { name: "repo", baseBranch: "main", worktreePath: ".", branch: "agent/3" },
+    })
+    freshDone.state = TaskState.DONE
+    freshDone.updatedAt = new Date().toISOString()
+
+    await store.save(oldDone)
+    await store.save(oldRunning)
+    await store.save(freshDone)
+
+    const result = await store.prune({
+      olderThanHours: 24,
+      states: ["DONE", "FAILED", "CANCELLED"],
+    })
+
+    expect(result.matched).toBe(1)
+    expect(result.deleted).toBe(1)
+    const tasks = await store.list()
+    expect(tasks.some((task) => task.taskId === oldDone.taskId)).toBe(false)
+    expect(tasks.some((task) => task.taskId === oldRunning.taskId)).toBe(true)
+    expect(tasks.some((task) => task.taskId === freshDone.taskId)).toBe(true)
+  })
+
+  test("supports dry-run prune", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lucy-task-store-"))
+    const store = new TaskStore(root)
+    const task = newTask({
+      title: "Task",
+      description: "desc",
+      source: { type: "feishu", userId: "u", chatId: "c", messageId: "m" },
+      repo: { name: "repo", baseBranch: "main", worktreePath: ".", branch: "agent/t" },
+    })
+    task.state = TaskState.DONE
+    task.updatedAt = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+    await store.save(task)
+
+    const result = await store.prune({ olderThanHours: 24, states: ["DONE"], dryRun: true })
+    expect(result.matched).toBe(1)
+    expect(result.deleted).toBe(0)
+
+    const loaded = await store.get(task.taskId)
+    expect(loaded.taskId).toBe(task.taskId)
   })
 })

@@ -558,6 +558,25 @@ export async function main(): Promise<void> {
     })
   })
 
+  program
+    .command("store-prune")
+    .option("--older-than-hours <hours>", "Delete tasks older than hours", "168")
+    .option("--states <csv>", "Task states to prune, comma-separated", "DONE,FAILED,CANCELLED")
+    .option("--dry-run", "Only report matches without deleting", false)
+    .action(async (commandOptions) => {
+      const options = normalizeOptions(program.opts())
+      const states = String(commandOptions.states ?? "")
+        .split(",")
+        .map((item: string) => item.trim())
+        .filter(Boolean)
+      const result = await new TaskStore(options.storeDir).prune({
+        olderThanHours: Number(commandOptions.olderThanHours ?? 168),
+        states,
+        dryRun: Boolean(commandOptions.dryRun),
+      })
+      printJson(result)
+    })
+
   await program.parseAsync(process.argv)
 }
 
