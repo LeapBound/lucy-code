@@ -1,10 +1,11 @@
 import * as Lark from "@larksuiteoapi/node-sdk"
 
 import { Orchestrator } from "../orchestrator.js"
+import { logError, logWarn } from "../logger.js"
 import type { FeishuRequirement } from "./feishu.js"
 import { FeishuMessenger } from "./feishu.js"
+import { extractTextMessageContent, normalizeNonTextMessage, readObject } from "./feishu-core.js"
 import { ProcessedMessageStore } from "./feishu-webhook.js"
-import { tryParseJsonObject } from "../json-utils.js"
 
 export interface FeishuLongConnSettings {
   repoName: string
@@ -105,33 +106,18 @@ export class FeishuLongConnProcessor {
 
   private extractMessageText(messageType: string, content: unknown): string {
     if (messageType === "text") {
-      if (typeof content !== "string") {
-        return ""
-      }
       try {
-        const parsed = tryParseJsonObject(content)
-        const text = parsed && typeof parsed === "object" ? String((parsed as Record<string, unknown>).text ?? "") : ""
-        return text.trim()
+        return extractTextMessageContent(content, { fallbackToRawOnInvalidJson: true })
       } catch (error) {
-        console.warn("Failed to parse long-connection text content as JSON, fallback to raw text:", error)
-        return content.trim()
+        logWarn("Failed to parse long-connection text content as JSON, fallback to raw text", {
+          phase: "longconn.parse",
+          error: error instanceof Error ? error.message : String(error),
+        })
+        return typeof content === "string" ? content.trim() : ""
       }
     }
 
-    if (messageType === "image") {
-      return "[image]"
-    }
-    if (messageType === "audio") {
-      return "[audio]"
-    }
-    if (messageType === "file") {
-      return "[file]"
-    }
-    if (messageType === "sticker") {
-      return "[sticker]"
-    }
-
-    return messageType ? `[${messageType}]` : ""
+    return normalizeNonTextMessage(messageType)
   }
 }
 
@@ -142,7 +128,7 @@ export async function serveFeishuLongConnection(options: FeishuLongConnStartOpti
   }).register({
     "im.message.receive_v1": (data: Record<string, unknown>) => {
       void options.processor.handleMessageEvent(data).catch((error) => {
-        console.error("Feishu long-connection event processing failed:", error)
+        logError("Feishu long-connection event processing failed", error, { phase: "longconn.event" })
       })
     },
   })
@@ -164,8 +150,4 @@ export async function serveFeishuLongConnection(options: FeishuLongConnStartOpti
     process.once("SIGINT", shutdown)
     process.once("SIGTERM", shutdown)
   })
-}
-
-function readObject(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" ? (value as Record<string, unknown>) : {}
 }

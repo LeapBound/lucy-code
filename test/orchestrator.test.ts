@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from "node:fs/promises"
+import { mkdtemp } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { afterEach, describe, expect, test } from "vitest"
@@ -56,6 +56,12 @@ class FakeOpenCodeClient implements OpenCodeClient {
   }
 }
 
+class BuildErrorOpenCodeClient extends FakeOpenCodeClient {
+  async build(): Promise<BuildExecutionResult> {
+    throw new Error("build exploded")
+  }
+}
+
 const createdDirs: string[] = []
 
 afterEach(async () => {
@@ -72,6 +78,17 @@ async function newHarness(testExitCode = 0) {
   createdDirs.push(root)
   const store = new TaskStore(join(root, "tasks"))
   const orchestrator = new Orchestrator(store, new FakeOpenCodeClient(testExitCode), {
+    reportDir: join(root, "reports"),
+    conversationStore: new FeishuConversationStore(join(root, "conversations.json")),
+  })
+  return { orchestrator, store }
+}
+
+async function newHarnessWithClient(client: OpenCodeClient) {
+  const root = await mkdtemp(join(tmpdir(), "lucy-orchestrator-test-"))
+  createdDirs.push(root)
+  const store = new TaskStore(join(root, "tasks"))
+  const orchestrator = new Orchestrator(store, client, {
     reportDir: join(root, "reports"),
     conversationStore: new FeishuConversationStore(join(root, "conversations.json")),
   })
@@ -109,6 +126,44 @@ describe("orchestrator", () => {
     await orchestrator.approveTask(task.taskId, "u")
     task = await orchestrator.runTask(task.taskId)
     expect(task.state).toBe(TaskState.FAILED)
+  })
+
+  test("rejects run when max attempts already reached", async () => {
+    const { orchestrator, store } = await newHarness(0)
+    const task = await orchestrator.createTask({
+      title: "Task",
+      description: "Implement",
+      source: { type: "feishu", userId: "u", chatId: "c", messageId: "m" },
+      repo: { name: "repo", baseBranch: "main", worktreePath: ".", branch: null },
+    })
+
+    task.state = TaskState.FAILED
+    task.execution.attempt = task.execution.maxAttempts
+    await store.save(task)
+
+    await expect(orchestrator.runTask(task.taskId)).rejects.toThrow(/exceeded max attempts/i)
+  })
+
+  test("records run.failed event with error payload when build throws", async () => {
+    const { orchestrator, store } = await newHarnessWithClient(new BuildErrorOpenCodeClient(0))
+    let task = await orchestrator.createTask({
+      title: "Task",
+      description: "Implement",
+      source: { type: "feishu", userId: "u", chatId: "c", messageId: "m" },
+      repo: { name: "repo", baseBranch: "main", worktreePath: ".", branch: null },
+    })
+
+    task = await orchestrator.clarifyTask(task.taskId)
+    await orchestrator.approveTask(task.taskId, "u")
+
+    await expect(orchestrator.runTask(task.taskId)).rejects.toThrow(/build exploded/)
+
+    const stored = await store.get(task.taskId)
+    const failedEvent = [...stored.eventLog].reverse().find((event) => event.eventType === "run.failed")
+
+    expect(stored.state).toBe(TaskState.FAILED)
+    expect(failedEvent).toBeTruthy()
+    expect(failedEvent?.payload).toMatchObject({ error: "build exploded", errorCode: "UNKNOWN_ERROR" })
   })
 
   test("does not create task immediately for ambiguous message", async () => {
@@ -160,5 +215,115 @@ describe("orchestrator", () => {
 
     const list = await store.list()
     expect(list.length).toBe(1)
+  })
+
+  test("creates task when user sends explicit start phrase", async () => {
+    const { orchestrator, store } = await newHarness(0)
+    await orchestrator.processFeishuMessage({
+      requirement: {
+        userId: "ou_1",
+        chatId: "oc_1",
+        messageId: "om_1",
+        text: "我要优化一下重试逻辑",
+      },
+      repoName: "repo",
+      autoClarify: false,
+    })
+
+    const confirmed = await orchestrator.processFeishuMessage({
+      requirement: {
+        userId: "ou_1",
+        chatId: "oc_1",
+        messageId: "om_2",
+        text: "就按这个做",
+      },
+      repoName: "repo",
+      autoClarify: false,
+    })
+
+    expect(confirmed.task).not.toBeNull()
+    expect(confirmed.task?.state).toBe(TaskState.NEW)
+
+    const list = await store.list()
+    expect(list.length).toBe(1)
+  })
+
+  test("returns latest task status when user asks for status", async () => {
+    const { orchestrator } = await newHarness(0)
+    const task = await orchestrator.createTask({
+      title: "Task",
+      description: "Implement",
+      source: { type: "feishu", userId: "ou_1", chatId: "oc_1", messageId: "m1" },
+      repo: { name: "repo", baseBranch: "main", worktreePath: ".", branch: null },
+    })
+
+    const result = await orchestrator.processFeishuMessage({
+      requirement: {
+        userId: "ou_1",
+        chatId: "oc_1",
+        messageId: "m2",
+        text: "状态",
+      },
+      repoName: "repo",
+    })
+
+    expect(result.task?.taskId).toBe(task.taskId)
+    expect(result.replyText).toContain(`任务 ${task.taskId} 当前状态：`)
+    expect(result.replyText).toContain("下一步建议：")
+  })
+
+  test("returns draft guidance when no task but draft exists and user asks status", async () => {
+    const { orchestrator } = await newHarness(0)
+    await orchestrator.processFeishuMessage({
+      requirement: {
+        userId: "ou_1",
+        chatId: "oc_1",
+        messageId: "m1",
+        text: "我想改一下接口重试策略",
+      },
+      repoName: "repo",
+      autoClarify: false,
+    })
+
+    const result = await orchestrator.processFeishuMessage({
+      requirement: {
+        userId: "ou_1",
+        chatId: "oc_1",
+        messageId: "m2",
+        text: "进度",
+      },
+      repoName: "repo",
+      autoClarify: false,
+    })
+
+    expect(result.task).toBeNull()
+    expect(result.replyText).toContain("未创建的草稿需求")
+  })
+
+  test("returns actionable failure text when approval provisioning fails", async () => {
+    const { orchestrator, store } = await newHarness(0)
+    const task = await orchestrator.createTask({
+      title: "Task",
+      description: "Implement",
+      source: { type: "feishu", userId: "ou_1", chatId: "oc_1", messageId: "m1" },
+      repo: { name: "repo", baseBranch: "main", worktreePath: ".", branch: null },
+    })
+    task.state = TaskState.WAIT_APPROVAL
+    await store.save(task)
+
+    const result = await orchestrator.processFeishuMessage({
+      requirement: {
+        userId: "ou_1",
+        chatId: "oc_1",
+        messageId: "m2",
+        text: "开始",
+      },
+      repoName: "repo",
+      repoPath: "/definitely/not/a/repo",
+      autoRunOnApprove: false,
+    })
+
+    expect(result.replyText).toContain("错误：")
+    expect(result.replyText).toContain("回复“继续”")
   })
 })

@@ -2,8 +2,10 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, resolve } from "node:path"
 
-import { OrchestratorError } from "../errors.js"
+import { errorCodeOf, OrchestratorError } from "../errors.js"
+import { logError, logWarn } from "../logger.js"
 import { Orchestrator } from "../orchestrator.js"
+import { readObject } from "./feishu-core.js"
 import { FeishuMessenger, parseRequirementEvent } from "./feishu.js"
 
 export interface FeishuWebhookSettings {
@@ -52,14 +54,32 @@ export class ProcessedMessageStore {
 
     try {
       const raw = await readFile(this.filePath, "utf-8")
-      const payload = JSON.parse(raw)
-      if (Array.isArray(payload)) {
-        this.seen = new Set(payload.map(String))
+      try {
+        const payload = JSON.parse(raw)
+        if (Array.isArray(payload)) {
+          this.seen = new Set(payload.map(String))
+          return
+        }
+        logWarn("Processed message store payload is not an array, starting with empty cache", {
+          phase: "webhook.processed-store.load",
+          filePath: this.filePath,
+        })
+      } catch (error) {
+        logWarn("Failed to parse processed message store JSON, starting with empty cache", {
+          phase: "webhook.processed-store.parse",
+          filePath: this.filePath,
+          error: error instanceof Error ? error.message : String(error),
+        })
       }
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        throw error
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return
       }
+      logWarn("Failed to read processed message store, starting with empty cache", {
+        phase: "webhook.processed-store.read",
+        filePath: this.filePath,
+        error: error instanceof Error ? error.message : String(error),
+      })
     }
   }
 
@@ -112,6 +132,10 @@ export class FeishuWebhookProcessor {
     try {
       requirement = parseRequirementEvent(payload)
     } catch (error) {
+      logWarn("Failed to parse Feishu webhook requirement payload", {
+        phase: "webhook.parse-requirement",
+        error: error instanceof Error ? error.message : String(error),
+      })
       return {
         statusCode: 400,
         payload: { error: error instanceof Error ? error.message : String(error) },
@@ -179,11 +203,13 @@ export class FeishuWebhookProcessor {
         },
       }
     } catch (error) {
+      logError("Feishu webhook payload processing failed", error, { phase: "webhook.process-payload" })
       return {
         statusCode: 500,
         payload: {
           status: "error",
           error: error instanceof Error ? error.message : String(error),
+          errorCode: errorCodeOf(error),
         },
       }
     }
@@ -204,8 +230,10 @@ export function serveFeishuWebhook(
     try {
       await handleRequest(processor, request, response)
     } catch (error) {
+      logError("Unhandled Feishu webhook request failure", error, { phase: "webhook.serve-request" })
       json(response, 500, {
         error: error instanceof Error ? error.message : String(error),
+        errorCode: errorCodeOf(error),
       })
     }
   })
@@ -240,6 +268,10 @@ async function handleRequest(
     }
     payload = parsed as Record<string, unknown>
   } catch (error) {
+    logWarn("Invalid JSON in Feishu webhook request body", {
+      phase: "webhook.parse-body",
+      error: error instanceof Error ? error.message : String(error),
+    })
     json(response, 400, { error: "invalid json" })
     return
   }
@@ -268,8 +300,4 @@ function json(response: ServerResponse, statusCode: number, payload: Record<stri
   response.statusCode = statusCode
   response.setHeader("content-type", "application/json; charset=utf-8")
   response.end(body)
-}
-
-function readObject(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" ? (value as Record<string, unknown>) : {}
 }

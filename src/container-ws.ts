@@ -1,7 +1,6 @@
-import { randomUUID } from "node:crypto"
-import { readFile } from "node:fs/promises"
 import { createServer } from "node:http"
 import { WebSocket, WebSocketServer } from "ws"
+import { logError, logInfo, logWarn } from "./logger.js"
 import { utcNowIso } from "./models.js"
 
 export interface TaskEvent {
@@ -20,12 +19,12 @@ export class ContainerWebSocketServer {
   private connections = new Map<string, TaskWebSocket>() // taskId -> ws
   private readonly eventHandlers = new Map<string, (event: TaskEvent) => void>()
 
-  constructor(private readonly port: number = 18791) {
+  constructor(port: number = 18791) {
     const server = createServer()
     this.wss = new WebSocketServer({ server })
     
     server.listen(port, "0.0.0.0", () => {
-      console.log(`Container WebSocket server listening on port ${port}`)
+      logInfo("Container WebSocket server listening", { phase: "container-ws.listen", port })
     })
 
     this.wss.on("connection", (ws: TaskWebSocket, req) => {
@@ -33,7 +32,10 @@ export class ContainerWebSocketServer {
       ws.taskId = taskId
       
       this.connections.set(taskId, ws)
-      console.log(`Task ${taskId} connected to WebSocket server`)
+      logInfo("Task connected to WebSocket server", {
+        phase: "container-ws.connection",
+        taskId,
+      })
 
       ws.on("message", (data) => {
         try {
@@ -49,17 +51,27 @@ export class ContainerWebSocketServer {
             this.handleEvent(event)
           }
         } catch (error) {
-          console.error(`Failed to parse WebSocket message: ${String(error)}`)
+          logWarn("Failed to parse WebSocket message", {
+            phase: "container-ws.parse-message",
+            taskId,
+            error: error instanceof Error ? error.message : String(error),
+          })
         }
       })
 
       ws.on("close", () => {
         this.connections.delete(taskId)
-        console.log(`Task ${taskId} disconnected from WebSocket server`)
+        logInfo("Task disconnected from WebSocket server", {
+          phase: "container-ws.disconnect",
+          taskId,
+        })
       })
 
       ws.on("error", (error) => {
-        console.error(`WebSocket error for task ${taskId}:`, error)
+        logError("WebSocket error for task", error, {
+          phase: "container-ws.socket-error",
+          taskId,
+        })
       })
     })
   }
@@ -74,7 +86,11 @@ export class ContainerWebSocketServer {
       try {
         handler(event)
       } catch (error) {
-        console.error(`Failed to handle event ${event.type}:`, error)
+        logError("Failed to handle container event", error, {
+          phase: "container-ws.handle-event",
+          taskId: event.taskId,
+          eventType: event.type,
+        })
       }
     }
   }

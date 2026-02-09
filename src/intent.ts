@@ -2,6 +2,7 @@ import { createOpencode, createOpencodeClient } from "@opencode-ai/sdk"
 
 import { OpenCodeInvocationError } from "./errors.js"
 import { extractFirstJsonObject } from "./json-utils.js"
+import { logWarn } from "./logger.js"
 import type { Task } from "./models.js"
 
 export const enum ApprovalIntent {
@@ -130,7 +131,10 @@ export class OpenCodeIntentClassifier implements IntentClassifier {
               try {
                 await started.client.instance.dispose()
               } catch (error) {
-                console.warn("Failed to dispose OpenCode client while classifying intent:", error)
+                logWarn("Failed to dispose OpenCode client while classifying intent", {
+                  phase: "intent.dispose",
+                  error: error instanceof Error ? error.message : String(error),
+                })
               }
             }
             return started.client

@@ -8,6 +8,7 @@ import { createOpencode } from "@opencode-ai/sdk"
 
 import { WorktreeError } from "./errors.js"
 import { extractFirstJsonObject } from "./json-utils.js"
+import { logWarn } from "./logger.js"
 
 export interface WorktreeHandle {
   branch: string
@@ -48,7 +49,10 @@ async function translateTitleToEnglishSlug(title: string, workspace: string): Pr
       try {
         await started.client.instance.dispose()
       } catch (error) {
-        console.warn("Failed to dispose OpenCode client while generating worktree slug:", error)
+        logWarn("Failed to dispose OpenCode client while generating worktree slug", {
+          phase: "worktree.slug.dispose",
+          error: error instanceof Error ? error.message : String(error),
+        })
       }
     }
 
@@ -172,7 +176,10 @@ export async function buildWorktreeName(
       const llmSlug = await translateTitleToEnglishSlug(trimmedTitle, options.workspace)
       slug = slugifyAscii(llmSlug)
     } catch (error) {
-      console.warn("Failed to generate English slug with OpenCode, falling back to rule-based slug:", error)
+      logWarn("Failed to generate English slug with OpenCode, falling back to rule-based slug", {
+        phase: "worktree.slug.fallback",
+        error: error instanceof Error ? error.message : String(error),
+      })
     }
   }
 

@@ -4,6 +4,7 @@ import { resolve } from "node:path"
 import { OrchestratorError } from "../errors.js"
 import { requestJsonObject } from "../http.js"
 import { tryParseJsonObject } from "../json-utils.js"
+import { extractTextMessageContent, readObject } from "./feishu-core.js"
 
 export interface FeishuRequirement {
   userId: string
@@ -53,15 +54,7 @@ export function parseRequirementEvent(payload: unknown): FeishuRequirement {
   const message = readObject(event, "message")
   const sender = readObject(event, "sender")
 
-  const contentRaw = message.content
-  let content: Record<string, unknown> = {}
-  if (typeof contentRaw === "string") {
-    content = tryParseJsonObject(contentRaw) ?? {}
-  } else if (contentRaw && typeof contentRaw === "object") {
-    content = contentRaw as Record<string, unknown>
-  }
-
-  const text = String(content.text ?? "").trim()
+  const text = extractTextMessageContent(message.content, { fallbackToRawOnInvalidJson: false })
   if (!text) {
     throw new OrchestratorError("Feishu event does not contain text requirement")
   }
@@ -128,16 +121,11 @@ export class FeishuMessenger {
       headers.authorization = `Bearer ${token}`
     }
 
-    return requestJsonObject(`${this.baseUrl}${path}`, {
+  return requestJsonObject(`${this.baseUrl}${path}`, {
       method,
       headers,
       payload,
       timeoutMs: 10_000,
     })
   }
-}
-
-function readObject(input: unknown, key?: string): Record<string, unknown> {
-  const value = key ? (input && typeof input === "object" ? (input as Record<string, unknown>)[key] : undefined) : input
-  return value && typeof value === "object" ? (value as Record<string, unknown>) : {}
 }

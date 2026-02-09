@@ -117,4 +117,43 @@ describe("FeishuLongConnProcessor", () => {
     expect(result.reason).toBe("sender_not_allowed")
     expect(processFeishuMessage).not.toHaveBeenCalled()
   })
+
+  test("falls back to raw text when message content is malformed json", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lucy-longconn-test-"))
+    const processFeishuMessage = vi.fn().mockResolvedValue({
+      task: { taskId: "task_1", state: "WAIT_APPROVAL" },
+      replyText: "ok",
+    })
+
+    const processor = new FeishuLongConnProcessor(
+      { processFeishuMessage } as unknown as any,
+      {
+        repoName: "repo",
+        sendReply: false,
+      },
+      undefined,
+      new ProcessedMessageStore(join(root, "seen.json")),
+    )
+
+    const result = await processor.handleMessageEvent({
+      sender: {
+        sender_id: { open_id: "ou_1" },
+        sender_type: "user",
+      },
+      message: {
+        message_id: "om_bad_json",
+        chat_id: "oc_1",
+        message_type: "text",
+        content: "  this is not json  ",
+      },
+    })
+
+    expect(result.status).toBe("ok")
+    expect(processFeishuMessage).toHaveBeenCalledTimes(1)
+    expect(processFeishuMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requirement: expect.objectContaining({ text: "this is not json" }),
+      }),
+    )
+  })
 })

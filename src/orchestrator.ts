@@ -4,7 +4,7 @@ import { basename, dirname, join, resolve } from "node:path"
 import { mkdirSync } from "node:fs"
 
 import type { OpenCodeClient } from "./adapters/opencode.js"
-import { OrchestratorError } from "./errors.js"
+import { errorCodeOf, OrchestratorError } from "./errors.js"
 import {
   ApprovalIntent,
   HybridIntentClassifier,
@@ -32,6 +32,7 @@ import { ContainerWebSocketServer } from "./container-ws.js"
 import type { TaskEvent } from "./container-ws.js"
 import type { FeishuRequirement } from "./channels/feishu.js"
 import { FeishuConversationStore } from "./channels/feishu-conversation.js"
+import { logError } from "./logger.js"
 
 export interface OrchestratorOptions {
   reportDir?: string
@@ -78,7 +79,7 @@ export class Orchestrator {
         await this.options.feishuMessenger.sendText(task.source.chatId, message)
       }
     } catch (error) {
-      console.error(`Failed to handle container event for task ${event.taskId}:`, error)
+      logError("Failed to handle container event", error, { taskId: event.taskId, phase: "container.event" })
     }
   }
 
@@ -346,7 +347,10 @@ export class Orchestrator {
         try {
           transition(task, TaskState.FAILED, "state.change", "Task failed")
         } catch (transitionError) {
-          console.error("Failed to transition task to FAILED, applying fallback state mutation:", transitionError)
+          logError("Failed to transition task to FAILED, applying fallback state mutation", transitionError, {
+            taskId: task.taskId,
+            phase: "run.transition",
+          })
           task.state = TaskState.FAILED
           task.updatedAt = utcNowIso()
         }
@@ -354,6 +358,7 @@ export class Orchestrator {
 
       recordTaskEvent(task, "run.failed", "Task run failed", {
         error: task.execution.lastError,
+        errorCode: errorCodeOf(error),
       })
       await this.store.save(task)
       throw error
@@ -375,22 +380,55 @@ export class Orchestrator {
     worktreesRoot?: string
     branchPrefix?: string
   }): Promise<{ task: Task | null; replyText: string }> {
+    const normalizedText = input.requirement.text.trim()
+
     // 1. Handle existing pending task (clarification/approval intent)
     const pendingTask = await this.findLatestWaitingApprovalTask(
       input.requirement.chatId,
       input.requirement.userId,
     )
 
+    if (this.isStatusQuery(normalizedText)) {
+      if (pendingTask) {
+        const current = await this.store.get(pendingTask.taskId)
+        return { task: current, replyText: this.buildTaskStatusReply(current) }
+      }
+
+      const latest = await this.findLatestTaskForChatUser(input.requirement.chatId, input.requirement.userId)
+      if (latest) {
+        const current = await this.store.get(latest.taskId)
+        return { task: current, replyText: this.buildTaskStatusReply(current) }
+      }
+
+      const draft = await this.conversationStore.getDraft(input.requirement.chatId, input.requirement.userId)
+      if (draft) {
+        return {
+          task: null,
+          replyText:
+            "你当前还有一条未创建的草稿需求。\n" +
+            "回复“开始/继续/就按这个做”我会立即建任务并进入澄清；\n" +
+            "回复“取消/算了”会清掉草稿。",
+        }
+      }
+
+      return {
+        task: null,
+        replyText: "目前没有进行中的任务。你可以直接发 `需求: ...`，或先描述需求让我帮你整理草稿。",
+      }
+    }
+
     if (pendingTask) {
       const openQuestions = openRequiredQuestions(pendingTask)
       if (openQuestions.length > 0) {
-        const trimmed = input.requirement.text.trim()
-        if (this.isDraftCancel(trimmed)) {
+        if (this.isDraftCancel(normalizedText)) {
           const task = await this.store.get(pendingTask.taskId)
           try {
             transition(task, TaskState.CANCELLED, "state.change", "Task cancelled by user")
           } catch (transitionError) {
-            console.error("Failed to transition task to CANCELLED during clarification, applying fallback:", transitionError)
+            logError("Failed to transition task to CANCELLED during clarification, applying fallback", transitionError, {
+              taskId: task.taskId,
+              phase: "clarify.transition",
+            })
             task.state = TaskState.CANCELLED
           }
           recordTaskEvent(task, "task.cancelled", "Task cancelled during clarification")
@@ -403,7 +441,7 @@ export class Orchestrator {
 
         const updated = await this.answerNextQuestion(
           pendingTask.taskId,
-          input.requirement.text,
+          normalizedText,
         )
         return { task: updated, replyText: this.buildNextInteractionPrompt(updated) }
       }
@@ -438,7 +476,12 @@ export class Orchestrator {
           } catch (error) {
             return {
               task,
-              replyText: `任务 ${task.taskId} 已批准，但创建 worktree 失败：${String(error)}。`,
+              replyText: this.buildActionableFailureReply(
+                task.taskId,
+                "创建 worktree 失败",
+                error,
+                "你可以先检查 repoPath 是否是可读写的 git 仓库，然后回复“继续”。",
+              ),
             }
           }
         }
@@ -449,14 +492,19 @@ export class Orchestrator {
           } catch (error) {
             return {
               task,
-              replyText: `任务 ${task.taskId} 已批准，但执行失败：${String(error)}。`,
+              replyText: this.buildActionableFailureReply(
+                task.taskId,
+                "执行失败",
+                error,
+                "你可以先回复“状态”查看最近错误，再回复“继续”重试。",
+              ),
             }
           }
         }
 
         return {
           task,
-          replyText: `任务 ${task.taskId} 已批准，当前状态：${task.state}。`,
+          replyText: this.buildTaskStatusReply(task),
         }
       }
 
@@ -509,8 +557,8 @@ export class Orchestrator {
     }
 
     // 4. Process draft continuation/approval intent
-    const normalized = input.requirement.text.trim()
-    const decision = await this.intentClassifier.classify(normalized)
+      const explicitDecision = this.parseExplicitDraftDecision(normalizedText)
+      const decision = explicitDecision ?? (await this.intentClassifier.classify(normalizedText))
 
     if (decision.intent === ApprovalIntent.APPROVE) {
       await this.conversationStore.clearDraft(draft.chatId, draft.userId)
@@ -527,7 +575,7 @@ export class Orchestrator {
       return await this.afterTaskCreated(task, input)
     }
 
-    if (decision.intent === ApprovalIntent.REJECT || this.isDraftCancel(normalized)) {
+    if (decision.intent === ApprovalIntent.REJECT || this.isDraftCancel(normalizedText)) {
       await this.conversationStore.clearDraft(draft.chatId, draft.userId)
       return { task: null, replyText: "好的，我不创建任务。" }
     }
@@ -543,6 +591,7 @@ export class Orchestrator {
       replyText:
         "收到，我把这条也记到草稿里了（仍未创建任务）。\n\n" +
         "如果你希望我开始做：直接回“开始/继续/就按这个做”就行。\n" +
+        "如果你想先看当前状态：回“状态/进度”。\n" +
         "如果你只是想问问：回“算了/不用/取消”就行。",
     }
   }
@@ -581,7 +630,12 @@ export class Orchestrator {
       } catch (error) {
         return {
           task,
-          replyText: `任务 ${task.taskId} 已创建，但 worktree 创建失败：${String(error)}。`,
+          replyText: this.buildActionableFailureReply(
+            task.taskId,
+            "worktree 创建失败",
+            error,
+            "建议先确认仓库路径和分支权限，然后回复“继续”重试。",
+          ),
         }
       }
     }
@@ -593,7 +647,7 @@ export class Orchestrator {
 
     return {
       task,
-      replyText: `任务 ${task.taskId} 已创建。下一步请运行 clarify。`,
+      replyText: `任务 ${task.taskId} 已创建。下一步请运行 clarify。你也可以随时回复“状态/进度”查看当前状态。`,
     }
   }
 
@@ -606,7 +660,7 @@ export class Orchestrator {
         `好的，任务 ${task.taskId} 已创建并完成澄清。\n` +
         `摘要：${summary}\n\n` +
         `有个细节我想跟你确认一下（${question.id}）：${question.question}\n` +
-        "你直接回复你的想法/选择就行。"
+        "你直接回复你的想法/选择就行。也可以回复“状态”查看任务进展。"
       )
     }
 
@@ -614,7 +668,7 @@ export class Orchestrator {
       `好的，任务 ${task.taskId} 已创建并完成澄清。\n` +
       `摘要：${summary}\n\n` +
       "接下来我是打算开始写代码跑测试，不过如果你想先暂停也可以。\n" +
-      "你直接告诉我“继续做/开始”或“先别做/暂停”就行。"
+      "你直接告诉我“继续做/开始”或“先别做/暂停”就行。你也可以随时回复“状态/进度”。"
     )
   }
 
@@ -680,6 +734,74 @@ export class Orchestrator {
     return patterns.some((pattern) => pattern.test(normalized))
   }
 
+  private parseExplicitDraftDecision(text: string): { intent: ApprovalIntent } | null {
+    const normalized = text.trim().toLowerCase()
+    if (!normalized) {
+      return null
+    }
+
+    const approve = [/^开始$/, /^继续$/, /^好(的)?，?做吧$/, /^就按这个做$/, /^可以开始了?$/, /^go$/]
+    if (approve.some((pattern) => pattern.test(normalized))) {
+      return { intent: ApprovalIntent.APPROVE }
+    }
+
+    const reject = [/^取消$/, /^算了$/, /^不用了?$/, /^先别做$/, /^暂停$/]
+    if (reject.some((pattern) => pattern.test(normalized))) {
+      return { intent: ApprovalIntent.REJECT }
+    }
+
+    return null
+  }
+
+  private buildActionableFailureReply(taskId: string, title: string, error: unknown, action: string): string {
+    const message = error instanceof Error ? error.message : String(error)
+    return `任务 ${taskId} ${title}。\n错误：${message}\n${action}`
+  }
+
+  private isStatusQuery(text: string): boolean {
+    const normalized = text.trim().toLowerCase()
+    if (!normalized) {
+      return false
+    }
+    const exact = new Set(["状态", "进度", "status", "/status", "当前状态", "任务状态"])
+    if (exact.has(normalized)) {
+      return true
+    }
+    return /(看|查).*(状态|进度)|status/i.test(normalized)
+  }
+
+  private buildTaskStatusReply(task: Task): string {
+    const lines = [
+      `任务 ${task.taskId} 当前状态：${task.state}`,
+      `已尝试次数：${task.execution.attempt}/${task.execution.maxAttempts}`,
+    ]
+    if (task.execution.lastError) {
+      lines.push(`最近错误：${task.execution.lastError}`)
+    }
+    lines.push(`下一步建议：${this.nextActionHint(task)}`)
+    return lines.join("\n")
+  }
+
+  private nextActionHint(task: Task): string {
+    if (task.state === TaskState.WAIT_APPROVAL) {
+      const openQuestions = openRequiredQuestions(task)
+      if (openQuestions.length > 0) {
+        return "直接回复上一个问题的答案。"
+      }
+      return "回复“开始/继续”批准执行，或回复“取消/暂停”。"
+    }
+    if (task.state === TaskState.FAILED) {
+      return "回复“继续”可触发下一次尝试（若未到最大次数）。"
+    }
+    if (task.state === TaskState.NEW || task.state === TaskState.CLARIFYING) {
+      return "继续澄清需求，确认后进入执行。"
+    }
+    if (task.state === TaskState.RUNNING || task.state === TaskState.TESTING || task.state === TaskState.AUTO_FIXING) {
+      return "任务正在处理中，稍后可再次回复“状态/进度”查看。"
+    }
+    return "当前无需操作。"
+  }
+
   private async findLatestWaitingApprovalTask(chatId: string, userId: string): Promise<Task | null> {
     const tasks = await this.store.list()
     const candidates = tasks.filter(
@@ -687,6 +809,17 @@ export class Orchestrator {
         task.state === TaskState.WAIT_APPROVAL &&
         task.source.chatId === chatId &&
         task.source.userId === userId,
+    )
+    if (candidates.length === 0) {
+      return null
+    }
+    return candidates.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0] ?? null
+  }
+
+  private async findLatestTaskForChatUser(chatId: string, userId: string): Promise<Task | null> {
+    const tasks = await this.store.list()
+    const candidates = tasks.filter(
+      (task) => task.source.chatId === chatId && task.source.userId === userId,
     )
     if (candidates.length === 0) {
       return null
