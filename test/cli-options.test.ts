@@ -36,4 +36,22 @@ describe("normalizeOptions", () => {
     expect(options.opencodeDockerReadOnlyRootFs).toBe(true)
     expect(options.opencodeDockerStopTimeoutSec).toBe(30)
   })
+
+  test("falls back safely on invalid numeric options", () => {
+    const options = normalizeOptions({
+      opencodeTimeout: "NaN",
+      opencodeDockerPidsLimit: "-5",
+      opencodeDockerStopTimeout: "0",
+      opencodeSdkTimeoutMs: "bad",
+      opencodeWsServerPort: "invalid",
+      intentConfidenceThreshold: "oops",
+    })
+
+    expect(options.opencodeTimeout).toBe(900)
+    expect(options.opencodeDockerPidsLimit).toBeUndefined()
+    expect(options.opencodeDockerStopTimeoutSec).toBe(30)
+    expect(options.opencodeSdkTimeoutMs).toBe(5000)
+    expect(options.opencodeWsServerPort).toBe(18791)
+    expect(options.intentConfidenceThreshold).toBe(0.8)
+  })
 })

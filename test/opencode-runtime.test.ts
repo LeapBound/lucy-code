@@ -46,4 +46,30 @@ describe("OpenCodeRuntimeClient runTest", () => {
     expect(payload.exitCode).toBe(124)
     expect(typeof payload.runtimeCommand).toBe("string")
   })
+
+  test("records signal or non-zero exit category for terminated command", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lucy-opencode-runtime-"))
+    const workspace = await mkdtemp(join(tmpdir(), "lucy-opencode-workspace-"))
+    createdDirs.push(root, workspace)
+
+    const client = new OpenCodeRuntimeClient({
+      artifactRoot: root,
+      timeoutSec: 5,
+      useDocker: false,
+    })
+
+    const task = newTask({
+      title: "Task",
+      description: "Run tests",
+      source: { type: "feishu", userId: "u", chatId: "c", messageId: "m" },
+      repo: { name: "repo", baseBranch: "main", worktreePath: workspace, branch: "agent/test" },
+    })
+
+    const result = await client.runTest(task, "kill -TERM $$")
+    expect(result.exitCode).not.toBe(0)
+
+    const payload = JSON.parse(await readFile(result.logPath, "utf-8")) as Record<string, unknown>
+    expect(payload.timedOut).toBe(false)
+    expect(["signal", "exit_code"]).toContain(payload.exitCategory)
+  })
 })

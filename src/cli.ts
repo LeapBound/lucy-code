@@ -575,7 +575,7 @@ export function normalizeOptions(raw: Record<string, unknown>): GlobalOptions {
     opencodeNodeCommand: String(raw.opencodeNodeCommand ?? "node"),
     opencodeSdkScript: String(raw.opencodeSdkScript ?? "scripts/opencode_sdk_bridge.mjs"),
     opencodeCommand: String(raw.opencodeCommand ?? "opencode"),
-    opencodeTimeout: Number(raw.opencodeTimeout ?? 900),
+    opencodeTimeout: parsePositiveNumber(raw.opencodeTimeout, 900),
     opencodeUseDocker: Boolean(raw.opencodeUseDocker),
     opencodeDockerImage: String(raw.opencodeDockerImage ?? "nanobot-opencode"),
     opencodeDockerUser:
@@ -586,10 +586,7 @@ export function normalizeOptions(raw: Record<string, unknown>): GlobalOptions {
       typeof raw.opencodeDockerNetwork === "string" && raw.opencodeDockerNetwork.trim()
         ? raw.opencodeDockerNetwork.trim()
         : undefined,
-    opencodeDockerPidsLimit:
-      typeof raw.opencodeDockerPidsLimit === "string" || typeof raw.opencodeDockerPidsLimit === "number"
-        ? Number(raw.opencodeDockerPidsLimit)
-        : undefined,
+    opencodeDockerPidsLimit: parseOptionalPositiveNumber(raw.opencodeDockerPidsLimit),
     opencodeDockerMemory:
       typeof raw.opencodeDockerMemory === "string" && raw.opencodeDockerMemory.trim()
         ? raw.opencodeDockerMemory.trim()
@@ -608,7 +605,7 @@ export function normalizeOptions(raw: Record<string, unknown>): GlobalOptions {
       typeof raw.opencodeDockerTmpfs === "string" && raw.opencodeDockerTmpfs.trim()
         ? raw.opencodeDockerTmpfs.trim()
         : undefined,
-    opencodeDockerStopTimeoutSec: Number(raw.opencodeDockerStopTimeout ?? 30),
+    opencodeDockerStopTimeoutSec: parsePositiveNumber(raw.opencodeDockerStopTimeout, 30),
     opencodePlanAgent: String(raw.opencodePlanAgent ?? "plan"),
     opencodeBuildAgent: String(raw.opencodeBuildAgent ?? "build"),
     opencodeSdkBaseUrl:
@@ -616,15 +613,44 @@ export function normalizeOptions(raw: Record<string, unknown>): GlobalOptions {
         ? raw.opencodeSdkBaseUrl
         : undefined,
     opencodeSdkHostname: String(raw.opencodeSdkHostname ?? "127.0.0.1"),
-    opencodeSdkPort: Number(raw.opencodeSdkPort ?? 0),
-    opencodeSdkTimeoutMs: Number(raw.opencodeSdkTimeoutMs ?? 5000),
+    opencodeSdkPort: parseNumber(raw.opencodeSdkPort, 0),
+    opencodeSdkTimeoutMs: parsePositiveNumber(raw.opencodeSdkTimeoutMs, 5000),
     opencodeWsServerHost: String(raw.opencodeWsServerHost ?? "host.docker.internal"),
-    opencodeWsServerPort: Number(raw.opencodeWsServerPort ?? 18791),
+    opencodeWsServerPort: parsePositiveNumber(raw.opencodeWsServerPort, 18791),
     intentMode:
       raw.intentMode === "llm" || raw.intentMode === "hybrid" ? raw.intentMode : "rules",
     intentAgent: String(raw.intentAgent ?? "plan"),
-    intentConfidenceThreshold: Number(raw.intentConfidenceThreshold ?? 0.8),
+    intentConfidenceThreshold: parseNumber(raw.intentConfidenceThreshold, 0.8),
   }
+}
+
+function parseNumber(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed)) {
+      return parsed
+    }
+  }
+  return fallback
+}
+
+function parsePositiveNumber(value: unknown, fallback: number): number {
+  const parsed = parseNumber(value, fallback)
+  return parsed > 0 ? parsed : fallback
+}
+
+function parseOptionalPositiveNumber(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === "") {
+    return undefined
+  }
+  const parsed = parseNumber(value, NaN)
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return undefined
+  }
+  return parsed
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
