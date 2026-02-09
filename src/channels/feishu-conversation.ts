@@ -20,12 +20,16 @@ export interface FeishuDraft {
  */
 export class FeishuConversationStore {
   private readonly filePath: string
+  private readonly maxEntries: number
+  private readonly maxAgeMs: number
   private loaded = false
   private drafts = new Map<string, FeishuDraft>()
   private writeChain: Promise<void> = Promise.resolve()
 
-  constructor(filePath = ".orchestrator/feishu_conversations.json") {
+  constructor(filePath = ".orchestrator/feishu_conversations.json", maxEntries = 2_000, maxAgeHours = 24 * 7) {
     this.filePath = resolve(filePath)
+    this.maxEntries = maxEntries > 0 ? Math.trunc(maxEntries) : 2_000
+    this.maxAgeMs = maxAgeHours > 0 ? Math.trunc(maxAgeHours * 60 * 60 * 1000) : 24 * 7 * 60 * 60 * 1000
   }
 
   /**
@@ -49,6 +53,7 @@ export class FeishuConversationStore {
         updatedAt: now,
       }
       this.drafts.set(this.key(draft.chatId, draft.userId), full)
+      this.enforceRetention(now)
       await this.persist()
       return full
     })
@@ -73,6 +78,7 @@ export class FeishuConversationStore {
         updatedAt: now,
       }
       this.drafts.set(key, updated)
+      this.enforceRetention(now)
       await this.persist()
       return updated
     })
@@ -128,6 +134,7 @@ export class FeishuConversationStore {
             })
           }
         }
+        this.enforceRetention()
       } catch (error) {
         logWarn("Failed to parse Feishu conversation draft store JSON, starting with empty cache", {
           phase: "feishu-conversation.load.parse",
@@ -166,5 +173,28 @@ export class FeishuConversationStore {
 
   private key(chatId: string, userId: string): string {
     return `${chatId}::${userId}`
+  }
+
+  private enforceRetention(nowIso = new Date().toISOString()): void {
+    const now = Date.parse(nowIso)
+    if (Number.isFinite(now)) {
+      for (const [key, draft] of this.drafts.entries()) {
+        const updatedAt = Date.parse(draft.updatedAt)
+        if (!Number.isFinite(updatedAt) || now - updatedAt > this.maxAgeMs) {
+          this.drafts.delete(key)
+        }
+      }
+    }
+
+    if (this.drafts.size <= this.maxEntries) {
+      return
+    }
+
+    const entries = [...this.drafts.entries()]
+    entries.sort((a, b) => Date.parse(a[1].updatedAt) - Date.parse(b[1].updatedAt))
+    const removeCount = this.drafts.size - this.maxEntries
+    for (let index = 0; index < removeCount; index += 1) {
+      this.drafts.delete(entries[index][0])
+    }
   }
 }
