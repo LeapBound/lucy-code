@@ -209,8 +209,8 @@ export class OpenCodeRuntimeClient implements OpenCodeClient {
       maxBuffer: 10 * 1024 * 1024,
     })
 
-    const timedOut = Boolean(result.error && /timed?\s*out|ETIMEDOUT/i.test(result.error.message))
-    const exitCode = typeof result.status === "number" ? result.status : timedOut ? 124 : 1
+    const processState = this.inspectSpawnResult(result)
+    const exitCode = processState.returnCode
     const stdout = result.stdout ?? ""
     const stderr = result.stderr ?? result.error?.message ?? ""
 
@@ -223,6 +223,8 @@ export class OpenCodeRuntimeClient implements OpenCodeClient {
       command,
       runtimeCommand: [runner.executable, ...runner.args].join(" "),
       exitCode,
+      timedOut: processState.timedOut,
+      signal: processState.signal,
       durationMs,
       stdout,
       stderr,
@@ -433,7 +435,7 @@ import { createOpencode } from "@opencode-ai/sdk";
     const events = this.parseJsonlEvents(stdout);
     const text = this.extractTextFromEvents(events);
     const usage = this.extractUsageFromCliEvents(events);
-    const error = result.status === 0 ? undefined : this.extractErrorText(events, stderr);
+    const error = this.computeRunError(processState, events, stderr)
 
     const runResult: OpenCodeRunResult = {
       agent: params.agent,
@@ -482,7 +484,7 @@ import { createOpencode } from "@opencode-ai/sdk";
     const events = this.parseJsonlEvents(stdout)
     const text = this.extractTextFromEvents(events)
     const usage = this.extractUsageFromCliEvents(events)
-    const error = result.status === 0 ? undefined : this.extractErrorText(events, stderr)
+    const error = this.computeRunError(processState, events, stderr)
 
     const runResult: OpenCodeRunResult = {
       agent: params.agent,
@@ -570,6 +572,23 @@ import { createOpencode } from "@opencode-ai/sdk";
       timedOut,
       signal: result.signal ?? null,
     }
+  }
+
+  private computeRunError(
+    processState: { returnCode: number; timedOut: boolean; signal: string | null },
+    events: Array<Record<string, unknown>>,
+    stderr: string,
+  ): string | undefined {
+    if (processState.returnCode === 0) {
+      return undefined
+    }
+    if (processState.timedOut) {
+      return `OpenCode execution timed out after ${this.timeoutSec}s`
+    }
+    if (processState.signal) {
+      return `OpenCode execution terminated by signal ${processState.signal}`
+    }
+    return this.extractErrorText(events, stderr)
   }
 
   private detectHostUser(): string | undefined {
