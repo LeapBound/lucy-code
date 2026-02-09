@@ -8,10 +8,11 @@
 - [Feishu Webhook Runtime](./feishu-webhook.md)
 
 ## Decision Records
-(TODO)
+- (Pending) Add ADRs for persistence model and idempotency strategy.
 
 ## Runbooks
-(TODO)
+- (Pending) Add runbook for Feishu webhook/longconn incident handling.
+- (Pending) Add runbook for TaskStore cleanup and task recovery.
 
 ## Templates
-(TODO)
+- (Pending) ADR template, incident report template.

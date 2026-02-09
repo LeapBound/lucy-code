@@ -9,6 +9,7 @@
 - 使用 OpenCode 执行澄清 / 构建 / 测试。
 - 默认以任务为粒度创建 git worktree 隔离执行环境，并可选使用 Docker 执行。
 - 同时支持 webhook 回调模式与长连接（WebSocket）模式。
+- 内置结构化日志与任务级指标计数/耗时统计（内存 registry）。
 
 ## 快速开始
 
@@ -84,6 +85,8 @@ npm run dev -- serve-feishu-longconn \
 
 - 如果你只是提问，机器人不会立即创建任务。
 - 用自然语言确认（例如 "好，帮我做" / "开始"）回复，或在消息前加 `需求:` 来显式创建任务。
+- 回复过长时会自动分段；若超过段数上限，尾段会截断并带 `...`。
+- 即使回复发送失败，消息也会先标记去重，避免同一条需求被重复执行。
 
 ## OpenCode 驱动
 
@@ -101,6 +104,34 @@ npm run dev -- \
   --opencode-docker-image nanobot-opencode \
   run --task-id <TASK_ID>
 ```
+
+容器隔离常用参数：
+
+```bash
+npm run dev -- \
+  --opencode-use-docker \
+  --opencode-docker-user "1000:1000" \
+  --opencode-docker-network "none" \
+  --opencode-docker-pids-limit 256 \
+  --opencode-docker-memory 2g \
+  --opencode-docker-cpus 2 \
+  --opencode-docker-read-only-root-fs \
+  --opencode-docker-tmpfs "/tmp:rw,noexec,nosuid,size=64m" \
+  --opencode-docker-stop-timeout 30 \
+  run --task-id <TASK_ID>
+```
+
+## 可靠性说明
+
+- `TaskStore`、Feishu 去重存储、Feishu 草稿存储均采用原子写（临时文件 + rename）。
+- Feishu 去重存储默认保留最近 `10000` 条消息 ID，避免无限增长。
+- Feishu 草稿存储默认支持条目数与时效清理（默认 2000 条，7 天）。
+- `TaskStore.list()` 遇到损坏任务文件会跳过并记录告警，不阻断整体读取。
+
+## 可观测性
+
+- 指标位于 `src/metrics.ts`，当前已接入任务创建、澄清、执行、容器事件等关键路径。
+- 结构化日志位于 `src/logger.ts`，Feishu/TaskStore/运行时错误路径均已接入。
 
 ## 目录结构
 
