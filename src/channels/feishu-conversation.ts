@@ -1,6 +1,8 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, resolve } from "node:path"
 
+import { logWarn } from "../logger.js"
+
 /**
  * Represents a draft task created from Feishu conversation
  */
@@ -88,35 +90,53 @@ export class FeishuConversationStore {
 
     try {
       const raw = await readFile(this.filePath, "utf-8")
-      const payload = JSON.parse(raw)
-      if (!payload || typeof payload !== "object") {
-        return
-      }
-      for (const [key, value] of Object.entries(payload as Record<string, unknown>)) {
-        if (!value || typeof value !== "object") {
-          continue
-        }
-        const item = value as Record<string, unknown>
-        if (
-          typeof item.chatId === "string" &&
-          typeof item.userId === "string" &&
-          typeof item.messageId === "string" &&
-          typeof item.text === "string"
-        ) {
-          this.drafts.set(key, {
-            chatId: item.chatId,
-            userId: item.userId,
-            messageId: item.messageId,
-            text: item.text,
-            createdAt: typeof item.createdAt === "string" ? item.createdAt : new Date().toISOString(),
-            updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : new Date().toISOString(),
+      try {
+        const payload = JSON.parse(raw)
+        if (!payload || typeof payload !== "object") {
+          logWarn("Feishu conversation draft store payload is invalid, starting with empty cache", {
+            phase: "feishu-conversation.load.invalid-payload",
+            filePath: this.filePath,
           })
+          return
         }
+
+        for (const [key, value] of Object.entries(payload as Record<string, unknown>)) {
+          if (!value || typeof value !== "object") {
+            continue
+          }
+          const item = value as Record<string, unknown>
+          if (
+            typeof item.chatId === "string" &&
+            typeof item.userId === "string" &&
+            typeof item.messageId === "string" &&
+            typeof item.text === "string"
+          ) {
+            this.drafts.set(key, {
+              chatId: item.chatId,
+              userId: item.userId,
+              messageId: item.messageId,
+              text: item.text,
+              createdAt: typeof item.createdAt === "string" ? item.createdAt : new Date().toISOString(),
+              updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : new Date().toISOString(),
+            })
+          }
+        }
+      } catch (error) {
+        logWarn("Failed to parse Feishu conversation draft store JSON, starting with empty cache", {
+          phase: "feishu-conversation.load.parse",
+          filePath: this.filePath,
+          error: error instanceof Error ? error.message : String(error),
+        })
       }
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        throw error
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return
       }
+      logWarn("Failed to read Feishu conversation draft store, starting with empty cache", {
+        phase: "feishu-conversation.load.read",
+        filePath: this.filePath,
+        error: error instanceof Error ? error.message : String(error),
+      })
     }
   }
 
