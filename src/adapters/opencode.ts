@@ -44,6 +44,8 @@ export interface OpenCodeRunResult {
   executionMode: "host" | "docker" | "container-sdk"
   timedOut: boolean
   signal: string | null
+  durationMs: number
+  exitCategory: "success" | "timeout" | "signal" | "exit_code"
   events: Array<Record<string, unknown>>
   text: string
   usage: Record<string, number>
@@ -71,6 +73,7 @@ export interface OpenCodeRuntimeOptions {
   dockerCpus?: string
   dockerReadOnlyRootFs?: boolean
   dockerTmpfs?: string
+  dockerStopTimeoutSec?: number
   timeoutSec?: number
   planAgent?: string
   buildAgent?: string
@@ -97,6 +100,7 @@ export class OpenCodeRuntimeClient implements OpenCodeClient {
   private readonly dockerCpus?: string
   private readonly dockerReadOnlyRootFs: boolean
   private readonly dockerTmpfs?: string
+  private readonly dockerStopTimeoutSec: number
   private readonly timeoutSec: number
   private readonly planAgent: string
   private readonly buildAgent: string
@@ -123,6 +127,7 @@ export class OpenCodeRuntimeClient implements OpenCodeClient {
     this.dockerCpus = options.dockerCpus
     this.dockerReadOnlyRootFs = options.dockerReadOnlyRootFs ?? true
     this.dockerTmpfs = options.dockerTmpfs ?? "/tmp:rw,noexec,nosuid,size=64m"
+    this.dockerStopTimeoutSec = options.dockerStopTimeoutSec ?? 30
     this.timeoutSec = options.timeoutSec ?? 900
     this.planAgent = options.planAgent ?? "plan"
     this.buildAgent = options.buildAgent ?? "build"
@@ -223,6 +228,7 @@ export class OpenCodeRuntimeClient implements OpenCodeClient {
       command,
       runtimeCommand: [runner.executable, ...runner.args].join(" "),
       exitCode,
+      exitCategory: this.classifyExitCategory(processState),
       timedOut: processState.timedOut,
       signal: processState.signal,
       durationMs,
@@ -278,6 +284,7 @@ export class OpenCodeRuntimeClient implements OpenCodeClient {
     taskId: string
     workspace: string
   }): Promise<OpenCodeRunResult> {
+    const startedAt = Date.now()
     const command = [this.nodeCommand, this.sdkScript]
     const payload = {
       agent: params.agent,
@@ -305,6 +312,8 @@ export class OpenCodeRuntimeClient implements OpenCodeClient {
           executionMode: "host",
           timedOut: false,
           signal: result.signal ?? null,
+          durationMs: Date.now() - startedAt,
+          exitCategory: "exit_code",
           events: [],
           text: "",
           usage: {},
@@ -326,6 +335,8 @@ export class OpenCodeRuntimeClient implements OpenCodeClient {
           executionMode: "host",
           timedOut: false,
           signal: result.signal ?? null,
+          durationMs: Date.now() - startedAt,
+          exitCategory: "exit_code",
           events: [],
           text: "",
           usage: {},
@@ -346,6 +357,8 @@ export class OpenCodeRuntimeClient implements OpenCodeClient {
         executionMode: "host",
         timedOut: false,
         signal: result.signal ?? null,
+        durationMs: Date.now() - startedAt,
+        exitCategory: "success",
         events,
         text: typeof parsed.text === "string" ? parsed.text : this.extractTextFromEvents(events),
         usage: {
@@ -365,6 +378,8 @@ export class OpenCodeRuntimeClient implements OpenCodeClient {
         executionMode: "host",
         timedOut: false,
         signal: null,
+        durationMs: Date.now() - startedAt,
+        exitCategory: "exit_code",
         events: [],
         text: "",
         usage: {},
@@ -380,6 +395,7 @@ export class OpenCodeRuntimeClient implements OpenCodeClient {
     taskId: string
     workspace: string
   }): Promise<OpenCodeRunResult> {
+    const startedAt = Date.now()
     // Construct the Docker command to run OpenCode in container with WebSocket communication
     const scriptContent = `
 import { createOpencode } from "@opencode-ai/sdk";
@@ -443,6 +459,8 @@ import { createOpencode } from "@opencode-ai/sdk";
       executionMode: "container-sdk",
       timedOut: processState.timedOut,
       signal: processState.signal,
+      durationMs: Date.now() - startedAt,
+      exitCategory: this.classifyExitCategory(processState),
       events,
       text,
       usage,
@@ -459,6 +477,7 @@ import { createOpencode } from "@opencode-ai/sdk";
     taskId: string
     workspace: string
   }): Promise<OpenCodeRunResult> {
+    const startedAt = Date.now()
     const opencodeCommand = [
       this.command,
       "run",
@@ -492,6 +511,8 @@ import { createOpencode } from "@opencode-ai/sdk";
       executionMode: this.useDocker ? "docker" : "host",
       timedOut: processState.timedOut,
       signal: processState.signal,
+      durationMs: Date.now() - startedAt,
+      exitCategory: this.classifyExitCategory(processState),
       events,
       text,
       usage,
@@ -524,6 +545,9 @@ import { createOpencode } from "@opencode-ai/sdk";
       if (this.dockerTmpfs) {
         args.push("--tmpfs", this.dockerTmpfs)
       }
+    }
+    if (this.dockerStopTimeoutSec > 0) {
+      args.push("--stop-timeout", String(this.dockerStopTimeoutSec))
     }
 
     if (this.dockerUser) {
@@ -572,6 +596,23 @@ import { createOpencode } from "@opencode-ai/sdk";
       timedOut,
       signal: result.signal ?? null,
     }
+  }
+
+  private classifyExitCategory(processState: {
+    returnCode: number
+    timedOut: boolean
+    signal: string | null
+  }): "success" | "timeout" | "signal" | "exit_code" {
+    if (processState.returnCode === 0) {
+      return "success"
+    }
+    if (processState.timedOut) {
+      return "timeout"
+    }
+    if (processState.signal) {
+      return "signal"
+    }
+    return "exit_code"
   }
 
   private computeRunError(
@@ -974,13 +1015,16 @@ import { createOpencode } from "@opencode-ai/sdk";
       workspace,
       command,
       returnCode: runResult.returnCode,
+      exitCategory: runResult.exitCategory,
       executionMode: runResult.executionMode,
       timedOut: runResult.timedOut,
       signal: runResult.signal,
+      durationMs: runResult.durationMs,
       container: {
         enabled: runResult.executionMode !== "host",
         isolationProfile: runResult.executionMode === "host" ? "host" : "docker-isolated",
         image: this.dockerImage,
+        stopTimeoutSec: this.dockerStopTimeoutSec,
         readOnlyRootFs: this.dockerReadOnlyRootFs,
         tmpfs: this.dockerTmpfs ?? null,
         user: this.dockerUser ?? null,

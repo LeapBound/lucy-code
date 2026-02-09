@@ -42,6 +42,7 @@ describe("OpenCodeRuntimeClient runTest", () => {
 
     const payload = JSON.parse(await readFile(result.logPath, "utf-8")) as Record<string, unknown>
     expect(payload.timedOut).toBe(true)
+    expect(payload.exitCategory).toBe("timeout")
     expect(payload.exitCode).toBe(124)
     expect(typeof payload.runtimeCommand).toBe("string")
   })

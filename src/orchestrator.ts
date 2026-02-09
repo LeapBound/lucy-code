@@ -15,6 +15,7 @@ import {
   openRequiredQuestions,
   QuestionStatus,
   recordTaskEvent,
+  StepStatus,
   StepType,
   TaskState,
   type PlanStep,
@@ -800,6 +801,11 @@ export class Orchestrator {
       lines.push(`最近错误：${task.execution.lastError}`)
     }
 
+    const planProgress = this.planProgressSummary(task)
+    if (planProgress) {
+      lines.push(`计划进度：${planProgress}`)
+    }
+
     const recentEvent = this.findLatestKeyEvent(task)
     if (recentEvent) {
       lines.push(`最近事件：${recentEvent.message}`)
@@ -821,6 +827,17 @@ export class Orchestrator {
       return { eventType: event.eventType, message: event.message }
     }
     return null
+  }
+
+  private planProgressSummary(task: Task): string | null {
+    if (!task.plan || task.plan.steps.length === 0) {
+      return null
+    }
+    const total = task.plan.steps.length
+    const completed = task.plan.steps.filter((step) => step.status === StepStatus.COMPLETED).length
+    const failed = task.plan.steps.filter((step) => step.status === StepStatus.FAILED).length
+    const running = task.plan.steps.filter((step) => step.status === StepStatus.RUNNING).length
+    return `已完成 ${completed}/${total}，进行中 ${running}，失败 ${failed}`
   }
 
   private nextActionHint(task: Task): string {

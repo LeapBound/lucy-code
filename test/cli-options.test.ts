@@ -13,6 +13,7 @@ describe("normalizeOptions", () => {
       opencodeDockerCpus: "2",
       opencodeDockerReadOnlyRootFs: true,
       opencodeDockerTmpfs: "/tmp:rw,size=64m",
+      opencodeDockerStopTimeout: "45",
       opencodeWsServerHost: "127.0.0.1",
       opencodeWsServerPort: "19000",
     })
@@ -25,6 +26,7 @@ describe("normalizeOptions", () => {
     expect(options.opencodeDockerCpus).toBe("2")
     expect(options.opencodeDockerReadOnlyRootFs).toBe(true)
     expect(options.opencodeDockerTmpfs).toBe("/tmp:rw,size=64m")
+    expect(options.opencodeDockerStopTimeoutSec).toBe(45)
     expect(options.opencodeWsServerHost).toBe("127.0.0.1")
     expect(options.opencodeWsServerPort).toBe(19000)
   })
@@ -32,5 +34,6 @@ describe("normalizeOptions", () => {
   test("defaults read-only root fs to true", () => {
     const options = normalizeOptions({})
     expect(options.opencodeDockerReadOnlyRootFs).toBe(true)
+    expect(options.opencodeDockerStopTimeoutSec).toBe(30)
   })
 })

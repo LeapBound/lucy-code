@@ -315,6 +315,7 @@ describe("orchestrator", () => {
 
     expect(result.replyText).toContain("待确认问题（q_scope）")
     expect(result.replyText).toContain("直接回复上面这个问题的答案")
+    expect(result.replyText).toContain("计划进度：")
   })
 
   test("returns draft guidance when no task but draft exists and user asks status", async () => {

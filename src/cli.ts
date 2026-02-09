@@ -50,6 +50,7 @@ interface GlobalOptions {
   opencodeDockerCpus?: string
   opencodeDockerReadOnlyRootFs: boolean
   opencodeDockerTmpfs?: string
+  opencodeDockerStopTimeoutSec: number
   opencodePlanAgent: string
   opencodeBuildAgent: string
   opencodeSdkBaseUrl?: string
@@ -80,6 +81,7 @@ function buildOrchestrator(options: GlobalOptions): Orchestrator {
     dockerCpus: options.opencodeDockerCpus,
     dockerReadOnlyRootFs: options.opencodeDockerReadOnlyRootFs,
     dockerTmpfs: options.opencodeDockerTmpfs,
+    dockerStopTimeoutSec: options.opencodeDockerStopTimeoutSec,
     workspace: options.workspace,
     timeoutSec: options.opencodeTimeout,
     planAgent: options.opencodePlanAgent,
@@ -161,6 +163,7 @@ export async function main(): Promise<void> {
     .option("--opencode-docker-read-only-root-fs", "Enable Docker read-only root filesystem", true)
     .option("--no-opencode-docker-read-only-root-fs", "Disable Docker read-only root filesystem")
     .option("--opencode-docker-tmpfs <spec>", "Docker tmpfs spec", "/tmp:rw,noexec,nosuid,size=64m")
+    .option("--opencode-docker-stop-timeout <sec>", "Docker stop timeout in seconds", "30")
     .option("--opencode-plan-agent <name>", "Plan agent name", "plan")
     .option("--opencode-build-agent <name>", "Build agent name", "build")
     .option("--opencode-sdk-base-url <url>", "Connect to existing OpenCode server")
@@ -605,6 +608,7 @@ export function normalizeOptions(raw: Record<string, unknown>): GlobalOptions {
       typeof raw.opencodeDockerTmpfs === "string" && raw.opencodeDockerTmpfs.trim()
         ? raw.opencodeDockerTmpfs.trim()
         : undefined,
+    opencodeDockerStopTimeoutSec: Number(raw.opencodeDockerStopTimeout ?? 30),
     opencodePlanAgent: String(raw.opencodePlanAgent ?? "plan"),
     opencodeBuildAgent: String(raw.opencodeBuildAgent ?? "build"),
     opencodeSdkBaseUrl:
