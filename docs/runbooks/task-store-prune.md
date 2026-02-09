@@ -13,13 +13,15 @@ npm run dev -- store-prune \
   --dry-run
 ```
 
+也可使用按天参数：`--older-than-days 7`。
+
 Review output, then run without `--dry-run`.
 
 ## Production Usage
 
 ```bash
 npm run dev -- store-prune \
-  --older-than-hours 168 \
+  --older-than-days 7 \
   --states DONE,FAILED,CANCELLED \
   --limit 500 \
   --batch-size 100
@@ -27,6 +29,7 @@ npm run dev -- store-prune \
 
 - `--limit`: cap deletions per run to avoid large spikes.
 - `--batch-size`: number of files deleted concurrently per batch.
+- 命令输出包含 `before/after` 状态分布摘要，可直接用于观察清理效果。
 
 ## Scheduling Example (cron)
 

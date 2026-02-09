@@ -561,27 +561,57 @@ export async function main(): Promise<void> {
   program
     .command("store-prune")
     .option("--older-than-hours <hours>", "Delete tasks older than hours", "168")
+    .option("--older-than-days <days>", "Delete tasks older than days (higher priority than hours)")
     .option("--states <csv>", "Task states to prune, comma-separated", "DONE,FAILED,CANCELLED")
     .option("--limit <num>", "Maximum tasks to prune in this run")
     .option("--batch-size <num>", "Delete batch size", "100")
     .option("--dry-run", "Only report matches without deleting", false)
     .action(async (commandOptions) => {
       const options = normalizeOptions(program.opts())
+      const store = new TaskStore(options.storeDir)
       const states = String(commandOptions.states ?? "")
         .split(",")
         .map((item: string) => item.trim())
         .filter(Boolean)
-      const result = await new TaskStore(options.storeDir).prune({
-        olderThanHours: Number(commandOptions.olderThanHours ?? 168),
+      const olderThanHours =
+        typeof commandOptions.olderThanDays === "string" && commandOptions.olderThanDays.trim()
+          ? Number(commandOptions.olderThanDays) * 24
+          : Number(commandOptions.olderThanHours ?? 168)
+      const limit =
+        typeof commandOptions.limit === "string" && commandOptions.limit.trim()
+          ? Number(commandOptions.limit)
+          : undefined
+      const batchSize = Number(commandOptions.batchSize ?? 100)
+      const dryRun = Boolean(commandOptions.dryRun)
+
+      const beforeTasks = await store.list()
+      const result = await store.prune({
+        olderThanHours,
         states,
-        limit:
-          typeof commandOptions.limit === "string" && commandOptions.limit.trim()
-            ? Number(commandOptions.limit)
-            : undefined,
-        batchSize: Number(commandOptions.batchSize ?? 100),
-        dryRun: Boolean(commandOptions.dryRun),
+        limit,
+        batchSize,
+        dryRun,
       })
-      printJson(result)
+      const afterTasks = dryRun ? beforeTasks : await store.list()
+
+      printJson({
+        input: {
+          olderThanHours,
+          states,
+          limit: limit ?? null,
+          batchSize,
+          dryRun,
+        },
+        before: {
+          count: beforeTasks.length,
+          byState: summarizeTasksByState(beforeTasks),
+        },
+        result,
+        after: {
+          count: afterTasks.length,
+          byState: summarizeTasksByState(afterTasks),
+        },
+      })
     })
 
   await program.parseAsync(process.argv)
@@ -677,6 +707,14 @@ function parseOptionalPositiveNumber(value: unknown): number | undefined {
     return undefined
   }
   return parsed
+}
+
+function summarizeTasksByState(tasks: Array<{ state: string }>): Record<string, number> {
+  const summary: Record<string, number> = {}
+  for (const task of tasks) {
+    summary[task.state] = (summary[task.state] ?? 0) + 1
+  }
+  return summary
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
