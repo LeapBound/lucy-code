@@ -19,6 +19,11 @@ export interface FeishuAppCredentials {
   enabled: boolean
 }
 
+export interface FeishuReplyPlan {
+  parts: string[]
+  truncated: boolean
+}
+
 const MAX_FEISHU_MESSAGE_CHARS = 4000
 const MAX_FEISHU_MESSAGE_PARTS = 5
 
@@ -86,14 +91,14 @@ export class FeishuMessenger {
     private readonly baseUrl = "https://open.feishu.cn/open-apis",
   ) {}
 
-  async sendText(chatId: string, text: string): Promise<void> {
+  async sendText(chatId: string, text: string): Promise<FeishuReplyPlan> {
     const token = await this.tenantAccessToken()
-    const parts = splitMessageForFeishu(text, {
+    const plan = planFeishuReply(text, {
       maxChars: MAX_FEISHU_MESSAGE_CHARS,
       maxParts: MAX_FEISHU_MESSAGE_PARTS,
     })
 
-    for (const part of parts) {
+    for (const part of plan.parts) {
       const response = await this.request("POST", "/im/v1/messages?receive_id_type=chat_id", {
         receive_id: chatId,
         msg_type: "text",
@@ -104,6 +109,7 @@ export class FeishuMessenger {
         throw new OrchestratorError(`Failed to send Feishu message: ${JSON.stringify(response)}`)
       }
     }
+    return plan
   }
 
   private async tenantAccessToken(): Promise<string> {
@@ -144,11 +150,18 @@ export function splitMessageForFeishu(
   text: string,
   options: { maxChars?: number; maxParts?: number } = {},
 ): string[] {
+  return planFeishuReply(text, options).parts
+}
+
+export function planFeishuReply(
+  text: string,
+  options: { maxChars?: number; maxParts?: number } = {},
+): FeishuReplyPlan {
   const maxChars = options.maxChars ?? MAX_FEISHU_MESSAGE_CHARS
   const maxParts = options.maxParts ?? MAX_FEISHU_MESSAGE_PARTS
   const normalized = text.trim()
   if (!normalized) {
-    return [""]
+    return { parts: [""], truncated: false }
   }
 
   const chunks: string[] = []
@@ -161,12 +174,12 @@ export function splitMessageForFeishu(
 
   if (rest.length <= maxChars) {
     chunks.push(rest)
-    return chunks
+    return { parts: chunks, truncated: false }
   }
 
   const tailLimit = Math.max(0, maxChars - 1)
   chunks.push(`${rest.slice(0, tailLimit)}…`)
-  return chunks
+  return { parts: chunks, truncated: true }
 }
 
 function findSplitBoundary(text: string, maxChars: number): number {

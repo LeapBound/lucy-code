@@ -6,7 +6,7 @@ import { errorCodeOf, OrchestratorError } from "../errors.js"
 import { logError, logWarn } from "../logger.js"
 import { Orchestrator } from "../orchestrator.js"
 import { readObject } from "./feishu-core.js"
-import { FeishuMessenger, parseRequirementEvent } from "./feishu.js"
+import { FeishuMessenger, parseRequirementEvent, planFeishuReply } from "./feishu.js"
 
 export interface FeishuWebhookSettings {
   repoName: string
@@ -188,6 +188,7 @@ export class FeishuWebhookProcessor {
       })
 
       let replySent = false
+      const replyPlan = planFeishuReply(replyText)
       if (this.settings.sendReply !== false && this.messenger) {
         await this.messenger.sendText(requirement.chatId, replyText)
         replySent = true
@@ -200,6 +201,8 @@ export class FeishuWebhookProcessor {
           payload: {
             status: "draft",
             replySent,
+            replyParts: replyPlan.parts.length,
+            replyTruncated: replyPlan.truncated,
           },
         }
       }
@@ -211,6 +214,8 @@ export class FeishuWebhookProcessor {
           taskId: task.taskId,
           taskState: task.state,
           replySent,
+          replyParts: replyPlan.parts.length,
+          replyTruncated: replyPlan.truncated,
         },
       }
     } catch (error) {

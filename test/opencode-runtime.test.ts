@@ -45,6 +45,10 @@ describe("OpenCodeRuntimeClient runTest", () => {
     expect(payload.exitCategory).toBe("timeout")
     expect(payload.exitCode).toBe(124)
     expect(typeof payload.runtimeCommand).toBe("string")
+    expect(payload.container).toMatchObject({
+      enabled: false,
+      isolationProfile: "host",
+    })
   })
 
   test("records signal or non-zero exit category for terminated command", async () => {

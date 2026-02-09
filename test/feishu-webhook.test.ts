@@ -51,6 +51,40 @@ describe("FeishuWebhookProcessor", () => {
       errorCode: "ORCH_FAIL",
     })
   })
+
+  test("returns reply part metadata for oversized replies", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lucy-webhook-store-"))
+    const store = new ProcessedMessageStore(join(root, "seen.json"))
+    const processFeishuMessage = vi.fn().mockResolvedValue({
+      task: { taskId: "task_1", state: "WAIT_APPROVAL" },
+      replyText: "x".repeat(30_000),
+    })
+    const processor = new FeishuWebhookProcessor(
+      { processFeishuMessage } as unknown as any,
+      { repoName: "repo", sendReply: false },
+      undefined,
+      store,
+    )
+
+    const result = await processor.processPayload({
+      header: { event_type: "im.message.receive_v1" },
+      event: {
+        message: {
+          chat_id: "oc_1",
+          message_id: "om_oversized",
+          content: JSON.stringify({ text: "hello" }),
+        },
+        sender: {
+          sender_id: { open_id: "ou_1" },
+        },
+      },
+    })
+
+    expect(result.statusCode).toBe(200)
+    expect(result.payload.status).toBe("ok")
+    expect(result.payload.replyParts).toBe(5)
+    expect(result.payload.replyTruncated).toBe(true)
+  })
 })
 
 describe("ProcessedMessageStore", () => {

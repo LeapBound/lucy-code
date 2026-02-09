@@ -3,7 +3,7 @@ import * as Lark from "@larksuiteoapi/node-sdk"
 import { Orchestrator } from "../orchestrator.js"
 import { logError, logWarn } from "../logger.js"
 import type { FeishuRequirement } from "./feishu.js"
-import { FeishuMessenger } from "./feishu.js"
+import { FeishuMessenger, planFeishuReply } from "./feishu.js"
 import { extractTextMessageContent, normalizeNonTextMessage, readObject } from "./feishu-core.js"
 import { ProcessedMessageStore } from "./feishu-webhook.js"
 
@@ -92,6 +92,7 @@ export class FeishuLongConnProcessor {
     })
 
     let replySent = false
+    const replyPlan = planFeishuReply(replyText)
     if (this.settings.sendReply !== false && this.messenger) {
       await this.messenger.sendText(chatId, replyText)
       replySent = true
@@ -99,9 +100,21 @@ export class FeishuLongConnProcessor {
 
     await this.processedStore.add(messageId)
     if (!task) {
-      return { status: "draft", replySent }
+      return {
+        status: "draft",
+        replySent,
+        replyParts: replyPlan.parts.length,
+        replyTruncated: replyPlan.truncated,
+      }
     }
-    return { status: "ok", taskId: task.taskId, taskState: task.state, replySent }
+    return {
+      status: "ok",
+      taskId: task.taskId,
+      taskState: task.state,
+      replySent,
+      replyParts: replyPlan.parts.length,
+      replyTruncated: replyPlan.truncated,
+    }
   }
 
   private extractMessageText(messageType: string, content: unknown): string {

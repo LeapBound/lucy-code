@@ -40,6 +40,8 @@ describe("FeishuLongConnProcessor", () => {
     })
 
     expect(result.status).toBe("ok")
+    expect(result.replyParts).toBe(1)
+    expect(result.replyTruncated).toBe(false)
     expect(processFeishuMessage).toHaveBeenCalledTimes(1)
     expect(sendText).toHaveBeenCalledWith("oc_1", "ok")
   })
@@ -149,6 +151,8 @@ describe("FeishuLongConnProcessor", () => {
     })
 
     expect(result.status).toBe("ok")
+    expect(result.replyParts).toBe(1)
+    expect(result.replyTruncated).toBe(false)
     expect(processFeishuMessage).toHaveBeenCalledTimes(1)
     expect(processFeishuMessage).toHaveBeenCalledWith(
       expect.objectContaining({
