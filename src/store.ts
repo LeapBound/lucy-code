@@ -78,13 +78,14 @@ export class TaskStore {
     batchSize?: number
     allowActiveStates?: boolean
     previewCount?: number
+    minAttempts?: number
   }): Promise<{
     scanned: number
     matched: number
     deleted: number
     skippedActiveState: number
     taskIds: string[]
-    preview: Array<{ taskId: string; state: string; title: string; updatedAt: string }>
+    preview: Array<{ taskId: string; state: string; title: string; updatedAt: string; attempts: number }>
   }> {
     await mkdir(this.rootDir, { recursive: true })
     const names = await readdir(this.rootDir)
@@ -94,6 +95,10 @@ export class TaskStore {
     const batchSize = input.batchSize && input.batchSize > 0 ? Math.trunc(input.batchSize) : 100
     const allowActiveStates = Boolean(input.allowActiveStates)
     const previewCount = input.previewCount && input.previewCount > 0 ? Math.trunc(input.previewCount) : 5
+    const minAttempts =
+      typeof input.minAttempts === "number" && Number.isFinite(input.minAttempts) && input.minAttempts > 0
+        ? Math.trunc(input.minAttempts)
+        : undefined
 
     let scanned = 0
     let skippedActiveState = 0
@@ -111,12 +116,13 @@ export class TaskStore {
         const updatedAtMs = Date.parse(task.updatedAt)
         const isOldEnough = Number.isFinite(updatedAtMs) && updatedAtMs <= cutoffMs
         const stateMatched = !stateSet || stateSet.has(task.state)
+        const attemptsMatched = minAttempts === undefined || task.execution.attempt >= minAttempts
         const isActiveState = TaskStore.ACTIVE_STATES.has(task.state)
         if (isActiveState && !allowActiveStates) {
           skippedActiveState += 1
           continue
         }
-        if (isOldEnough && stateMatched) {
+        if (isOldEnough && stateMatched && attemptsMatched) {
           matchedEntries.push({ task, path })
         }
       } catch (error) {
@@ -149,6 +155,7 @@ export class TaskStore {
         state: entry.task.state,
         title: entry.task.title,
         updatedAt: entry.task.updatedAt,
+        attempts: entry.task.execution.attempt,
       })),
     }
   }

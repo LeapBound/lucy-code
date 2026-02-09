@@ -154,6 +154,7 @@ describe("TaskStore", () => {
     expect(result.preview.length).toBe(2)
     expect(result.preview[0].taskId).toBe(tasks[3].taskId)
     expect(result.preview[1].taskId).toBe(tasks[2].taskId)
+    expect(result.preview[0].attempts).toBe(tasks[3].execution.attempt)
 
     const remaining = await store.list()
     expect(remaining.length).toBe(2)
@@ -188,5 +189,43 @@ describe("TaskStore", () => {
     expect(allowed.matched).toBe(1)
     expect(allowed.deleted).toBe(1)
     expect((await store.list()).length).toBe(0)
+  })
+
+  test("filters prune by minimum attempts", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lucy-task-store-"))
+    const store = new TaskStore(root)
+    const lowAttempt = newTask({
+      title: "low",
+      description: "desc",
+      source: { type: "feishu", userId: "u", chatId: "c", messageId: "m1" },
+      repo: { name: "repo", baseBranch: "main", worktreePath: ".", branch: "agent/low" },
+    })
+    lowAttempt.state = TaskState.FAILED
+    lowAttempt.execution.attempt = 1
+    lowAttempt.updatedAt = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString()
+
+    const highAttempt = newTask({
+      title: "high",
+      description: "desc",
+      source: { type: "feishu", userId: "u", chatId: "c", messageId: "m2" },
+      repo: { name: "repo", baseBranch: "main", worktreePath: ".", branch: "agent/high" },
+    })
+    highAttempt.state = TaskState.FAILED
+    highAttempt.execution.attempt = 4
+    highAttempt.updatedAt = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString()
+
+    await store.save(lowAttempt)
+    await store.save(highAttempt)
+
+    const result = await store.prune({
+      olderThanHours: 24,
+      states: [TaskState.FAILED],
+      minAttempts: 3,
+    })
+
+    expect(result.matched).toBe(1)
+    expect(result.taskIds).toEqual([highAttempt.taskId])
+    const remaining = await store.list()
+    expect(remaining.some((task) => task.taskId === lowAttempt.taskId)).toBe(true)
   })
 })

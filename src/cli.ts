@@ -1,5 +1,8 @@
 import { Command } from "commander"
 
+import { mkdir, writeFile } from "node:fs/promises"
+import { dirname, resolve } from "node:path"
+
 import { OpenCodeRuntimeClient } from "./adapters/opencode.js"
 import {
   FeishuMessenger,
@@ -565,8 +568,10 @@ export async function main(): Promise<void> {
     .option("--states <csv>", "Task states to prune, comma-separated", "DONE,FAILED,CANCELLED")
     .option("--limit <num>", "Maximum tasks to prune in this run")
     .option("--batch-size <num>", "Delete batch size", "100")
+    .option("--min-attempts <num>", "Only prune tasks with attempts >= this value")
     .option("--preview <num>", "Show oldest matched tasks preview count", "5")
     .option("--include-running", "Allow pruning active states (RUNNING/CLARIFYING/etc.)", false)
+    .option("--report-file <path>", "Write prune result JSON to file")
     .option("--dry-run", "Only report matches without deleting", false)
     .action(async (commandOptions) => {
       const options = normalizeOptions(program.opts())
@@ -584,6 +589,10 @@ export async function main(): Promise<void> {
           ? Number(commandOptions.limit)
           : undefined
       const batchSize = Number(commandOptions.batchSize ?? 100)
+      const minAttempts =
+        typeof commandOptions.minAttempts === "string" && commandOptions.minAttempts.trim()
+          ? Number(commandOptions.minAttempts)
+          : undefined
       const previewCount = Number(commandOptions.preview ?? 5)
       const dryRun = Boolean(commandOptions.dryRun)
       const includeRunning = Boolean(commandOptions.includeRunning)
@@ -594,18 +603,20 @@ export async function main(): Promise<void> {
         states,
         limit,
         batchSize,
+        minAttempts,
         dryRun,
         allowActiveStates: includeRunning,
         previewCount,
       })
       const afterTasks = dryRun ? beforeTasks : await store.list()
 
-      printJson({
+      const output = {
         input: {
           olderThanHours,
           states,
           limit: limit ?? null,
           batchSize,
+          minAttempts: minAttempts ?? null,
           previewCount,
           includeRunning,
           dryRun,
@@ -619,7 +630,15 @@ export async function main(): Promise<void> {
           count: afterTasks.length,
           byState: summarizeTasksByState(afterTasks),
         },
-      })
+      }
+
+      if (typeof commandOptions.reportFile === "string" && commandOptions.reportFile.trim()) {
+        const reportPath = resolve(commandOptions.reportFile)
+        await mkdir(dirname(reportPath), { recursive: true })
+        await writeFile(reportPath, `${JSON.stringify(output, null, 2)}\n`, "utf-8")
+      }
+
+      printJson(output)
     })
 
   await program.parseAsync(process.argv)
