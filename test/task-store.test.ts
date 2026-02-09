@@ -95,6 +95,7 @@ describe("TaskStore", () => {
 
     expect(result.matched).toBe(1)
     expect(result.deleted).toBe(1)
+    expect(result.skippedActiveState).toBe(1)
     const tasks = await store.list()
     expect(tasks.some((task) => task.taskId === oldDone.taskId)).toBe(false)
     expect(tasks.some((task) => task.taskId === oldRunning.taskId)).toBe(true)
@@ -150,11 +151,42 @@ describe("TaskStore", () => {
 
     expect(result.matched).toBe(2)
     expect(result.deleted).toBe(2)
+    expect(result.preview.length).toBe(2)
+    expect(result.preview[0].taskId).toBe(tasks[3].taskId)
+    expect(result.preview[1].taskId).toBe(tasks[2].taskId)
 
     const remaining = await store.list()
     expect(remaining.length).toBe(2)
     const remainingIds = new Set(remaining.map((item) => item.taskId))
     expect(remainingIds.has(tasks[0].taskId)).toBe(true)
     expect(remainingIds.has(tasks[1].taskId)).toBe(true)
+  })
+
+  test("protects active states unless explicitly allowed", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lucy-task-store-"))
+    const store = new TaskStore(root)
+    const task = newTask({
+      title: "running",
+      description: "desc",
+      source: { type: "feishu", userId: "u", chatId: "c", messageId: "m" },
+      repo: { name: "repo", baseBranch: "main", worktreePath: ".", branch: "agent/run" },
+    })
+    task.state = TaskState.RUNNING
+    task.updatedAt = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+    await store.save(task)
+
+    const blocked = await store.prune({ olderThanHours: 24, states: [TaskState.RUNNING] })
+    expect(blocked.matched).toBe(0)
+    expect(blocked.skippedActiveState).toBe(1)
+    expect((await store.list()).length).toBe(1)
+
+    const allowed = await store.prune({
+      olderThanHours: 24,
+      states: [TaskState.RUNNING],
+      allowActiveStates: true,
+    })
+    expect(allowed.matched).toBe(1)
+    expect(allowed.deleted).toBe(1)
+    expect((await store.list()).length).toBe(0)
   })
 })

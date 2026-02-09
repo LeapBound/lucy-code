@@ -7,6 +7,14 @@ import { parseTask, serializeTask, type Task } from "./models.js"
 
 export class TaskStore {
   private readonly writeChains = new Map<string, Promise<void>>()
+  private static readonly ACTIVE_STATES = new Set([
+    "NEW",
+    "CLARIFYING",
+    "WAIT_APPROVAL",
+    "RUNNING",
+    "TESTING",
+    "AUTO_FIXING",
+  ])
 
   constructor(private readonly rootDir: string) {}
 
@@ -68,15 +76,27 @@ export class TaskStore {
     dryRun?: boolean
     limit?: number
     batchSize?: number
-  }): Promise<{ scanned: number; matched: number; deleted: number; taskIds: string[] }> {
+    allowActiveStates?: boolean
+    previewCount?: number
+  }): Promise<{
+    scanned: number
+    matched: number
+    deleted: number
+    skippedActiveState: number
+    taskIds: string[]
+    preview: Array<{ taskId: string; state: string; title: string; updatedAt: string }>
+  }> {
     await mkdir(this.rootDir, { recursive: true })
     const names = await readdir(this.rootDir)
     const cutoffMs = Date.now() - Math.max(0, input.olderThanHours) * 60 * 60 * 1000
     const stateSet = input.states && input.states.length > 0 ? new Set(input.states) : null
     const limit = input.limit && input.limit > 0 ? Math.trunc(input.limit) : undefined
     const batchSize = input.batchSize && input.batchSize > 0 ? Math.trunc(input.batchSize) : 100
+    const allowActiveStates = Boolean(input.allowActiveStates)
+    const previewCount = input.previewCount && input.previewCount > 0 ? Math.trunc(input.previewCount) : 5
 
     let scanned = 0
+    let skippedActiveState = 0
     const matchedEntries: Array<{ task: Task; path: string }> = []
 
     for (const fileName of names) {
@@ -91,6 +111,11 @@ export class TaskStore {
         const updatedAtMs = Date.parse(task.updatedAt)
         const isOldEnough = Number.isFinite(updatedAtMs) && updatedAtMs <= cutoffMs
         const stateMatched = !stateSet || stateSet.has(task.state)
+        const isActiveState = TaskStore.ACTIVE_STATES.has(task.state)
+        if (isActiveState && !allowActiveStates) {
+          skippedActiveState += 1
+          continue
+        }
         if (isOldEnough && stateMatched) {
           matchedEntries.push({ task, path })
         }
@@ -117,7 +142,14 @@ export class TaskStore {
       scanned,
       matched: selected.length,
       deleted: input.dryRun ? 0 : selected.length,
+      skippedActiveState,
       taskIds: selected.map((entry) => entry.task.taskId),
+      preview: selected.slice(0, previewCount).map((entry) => ({
+        taskId: entry.task.taskId,
+        state: entry.task.state,
+        title: entry.task.title,
+        updatedAt: entry.task.updatedAt,
+      })),
     }
   }
 

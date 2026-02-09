@@ -24,11 +24,14 @@ npm run dev -- store-prune \
   --older-than-days 7 \
   --states DONE,FAILED,CANCELLED \
   --limit 500 \
-  --batch-size 100
+  --batch-size 100 \
+  --preview 10
 ```
 
 - `--limit`: cap deletions per run to avoid large spikes.
 - `--batch-size`: number of files deleted concurrently per batch.
+- `--preview`: include oldest matched tasks preview in output.
+- `--include-running`: allow pruning active states; default is safe-off.
 - 命令输出包含 `before/after` 状态分布摘要，可直接用于观察清理效果。
 
 ## Scheduling Example (cron)

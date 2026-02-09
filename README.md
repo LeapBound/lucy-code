@@ -127,7 +127,7 @@ npm run dev -- \
 - Feishu 去重存储默认保留最近 `10000` 条消息 ID，避免无限增长。
 - Feishu 草稿存储默认支持条目数与时效清理（默认 2000 条，7 天）。
 - `TaskStore.list()` 遇到损坏任务文件会跳过并记录告警，不阻断整体读取。
-- 支持 `store-prune` 运维命令，按状态+时间清理历史任务，并支持 `--dry-run`、`--limit`、`--batch-size`、`--older-than-days`。
+- 支持 `store-prune` 运维命令，按状态+时间清理历史任务，并支持 `--dry-run`、`--limit`、`--batch-size`、`--older-than-days`、`--preview`（默认不清理运行中状态，需 `--include-running` 显式开启）。
 
 ## 可观测性
 

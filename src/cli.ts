@@ -565,6 +565,8 @@ export async function main(): Promise<void> {
     .option("--states <csv>", "Task states to prune, comma-separated", "DONE,FAILED,CANCELLED")
     .option("--limit <num>", "Maximum tasks to prune in this run")
     .option("--batch-size <num>", "Delete batch size", "100")
+    .option("--preview <num>", "Show oldest matched tasks preview count", "5")
+    .option("--include-running", "Allow pruning active states (RUNNING/CLARIFYING/etc.)", false)
     .option("--dry-run", "Only report matches without deleting", false)
     .action(async (commandOptions) => {
       const options = normalizeOptions(program.opts())
@@ -582,7 +584,9 @@ export async function main(): Promise<void> {
           ? Number(commandOptions.limit)
           : undefined
       const batchSize = Number(commandOptions.batchSize ?? 100)
+      const previewCount = Number(commandOptions.preview ?? 5)
       const dryRun = Boolean(commandOptions.dryRun)
+      const includeRunning = Boolean(commandOptions.includeRunning)
 
       const beforeTasks = await store.list()
       const result = await store.prune({
@@ -591,6 +595,8 @@ export async function main(): Promise<void> {
         limit,
         batchSize,
         dryRun,
+        allowActiveStates: includeRunning,
+        previewCount,
       })
       const afterTasks = dryRun ? beforeTasks : await store.list()
 
@@ -600,6 +606,8 @@ export async function main(): Promise<void> {
           states,
           limit: limit ?? null,
           batchSize,
+          previewCount,
+          includeRunning,
           dryRun,
         },
         before: {
