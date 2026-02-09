@@ -142,6 +142,8 @@ export class FeishuMessenger {
       headers,
       payload,
       timeoutMs: 10_000,
+      retries: 2,
+      retryDelayMs: 200,
     })
   }
 }
