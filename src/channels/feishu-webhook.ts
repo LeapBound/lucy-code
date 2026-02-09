@@ -64,6 +64,7 @@ export class ProcessedMessageStore {
         const payload = JSON.parse(raw)
         if (Array.isArray(payload)) {
           this.seen = new Set(payload.map(String))
+          this.enforceLimit()
           return
         }
         logWarn("Processed message store payload is not an array, starting with empty cache", {

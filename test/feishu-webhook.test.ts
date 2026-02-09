@@ -188,4 +188,17 @@ describe("ProcessedMessageStore", () => {
     const persisted = JSON.parse(await readFile(path, "utf-8")) as string[]
     expect(persisted).toEqual(["m2", "m3", "m4"])
   })
+
+  test("prunes oversized persisted ids during load", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lucy-webhook-store-"))
+    const path = join(root, "seen.json")
+    await writeFile(path, JSON.stringify(["m1", "m2", "m3", "m4", "m5"]), "utf-8")
+
+    const store = new ProcessedMessageStore(path, 3)
+    await expect(store.has("m1")).resolves.toBe(false)
+    await expect(store.has("m2")).resolves.toBe(false)
+    await expect(store.has("m3")).resolves.toBe(true)
+    await expect(store.has("m4")).resolves.toBe(true)
+    await expect(store.has("m5")).resolves.toBe(true)
+  })
 })
