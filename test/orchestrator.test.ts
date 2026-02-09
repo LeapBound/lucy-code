@@ -62,6 +62,12 @@ class BuildErrorOpenCodeClient extends FakeOpenCodeClient {
   }
 }
 
+class TimeoutBuildErrorOpenCodeClient extends FakeOpenCodeClient {
+  async build(): Promise<BuildExecutionResult> {
+    throw new Error("OpenCode execution timed out after 900s")
+  }
+}
+
 const createdDirs: string[] = []
 
 afterEach(async () => {
@@ -269,6 +275,7 @@ describe("orchestrator", () => {
 
     expect(result.task?.taskId).toBe(task.taskId)
     expect(result.replyText).toContain(`任务 ${task.taskId} 当前状态：`)
+    expect(result.replyText).toContain("最近事件：")
     expect(result.replyText).toContain("下一步建议：")
   })
 
@@ -363,5 +370,32 @@ describe("orchestrator", () => {
 
     expect(result.replyText).toContain("错误：")
     expect(result.replyText).toContain("回复“继续”")
+  })
+
+  test("returns timeout-specific action hint when approval auto-run times out", async () => {
+    const { orchestrator, store } = await newHarnessWithClient(new TimeoutBuildErrorOpenCodeClient(0))
+    let task = await orchestrator.createTask({
+      title: "Task",
+      description: "Implement",
+      source: { type: "feishu", userId: "ou_1", chatId: "oc_1", messageId: "m1" },
+      repo: { name: "repo", baseBranch: "main", worktreePath: ".", branch: "agent/test" },
+    })
+    task = await orchestrator.clarifyTask(task.taskId)
+    task.repo = { ...task.repo, worktreePath: ".", branch: "agent/test" }
+    await store.save(task)
+
+    const result = await orchestrator.processFeishuMessage({
+      requirement: {
+        userId: "ou_1",
+        chatId: "oc_1",
+        messageId: "m2",
+        text: "开始",
+      },
+      repoName: "repo",
+      autoRunOnApprove: true,
+    })
+
+    expect(result.replyText).toContain("超时")
+    expect(result.replyText).toContain("拆分步骤")
   })
 })

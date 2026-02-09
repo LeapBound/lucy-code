@@ -755,7 +755,17 @@ export class Orchestrator {
 
   private buildActionableFailureReply(taskId: string, title: string, error: unknown, action: string): string {
     const message = error instanceof Error ? error.message : String(error)
-    return `任务 ${taskId} ${title}。\n错误：${message}\n${action}`
+    return `任务 ${taskId} ${title}。\n错误：${message}\n${this.classifyFailureAction(message, action)}`
+  }
+
+  private classifyFailureAction(message: string, fallback: string): string {
+    if (/timed?\s*out|超时/i.test(message)) {
+      return "这次看起来是超时。你可以先缩小改动范围或拆分步骤，然后回复“继续”重试。"
+    }
+    if (/signal|terminated|killed|aborted/i.test(message)) {
+      return "执行过程被中断。你可以先回复“状态”查看最近事件，再回复“继续”重试。"
+    }
+    return fallback
   }
 
   private isStatusQuery(text: string): boolean {
@@ -789,8 +799,28 @@ export class Orchestrator {
     if (task.execution.lastError) {
       lines.push(`最近错误：${task.execution.lastError}`)
     }
+
+    const recentEvent = this.findLatestKeyEvent(task)
+    if (recentEvent) {
+      lines.push(`最近事件：${recentEvent.message}`)
+    }
+
     lines.push(`下一步建议：${this.nextActionHint(task)}`)
     return lines.join("\n")
+  }
+
+  private findLatestKeyEvent(task: Task): { eventType: string; message: string } | null {
+    if (task.eventLog.length === 0) {
+      return null
+    }
+    for (let i = task.eventLog.length - 1; i >= 0; i -= 1) {
+      const event = task.eventLog[i]
+      if (event.eventType.startsWith("run.status")) {
+        continue
+      }
+      return { eventType: event.eventType, message: event.message }
+    }
+    return null
   }
 
   private nextActionHint(task: Task): string {
