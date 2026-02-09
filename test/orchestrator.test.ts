@@ -68,6 +68,12 @@ class TimeoutBuildErrorOpenCodeClient extends FakeOpenCodeClient {
   }
 }
 
+class SignalBuildErrorOpenCodeClient extends FakeOpenCodeClient {
+  async build(): Promise<BuildExecutionResult> {
+    throw new Error("OpenCode execution terminated by signal SIGTERM")
+  }
+}
+
 const createdDirs: string[] = []
 
 afterEach(async () => {
@@ -314,8 +320,10 @@ describe("orchestrator", () => {
     })
 
     expect(result.replyText).toContain("待确认问题（q_scope）")
+    expect(result.replyText).toContain("问题进度：")
     expect(result.replyText).toContain("直接回复上面这个问题的答案")
     expect(result.replyText).toContain("计划进度：")
+    expect(result.replyText).toContain("当前步骤：")
   })
 
   test("returns draft guidance when no task but draft exists and user asks status", async () => {
@@ -398,5 +406,32 @@ describe("orchestrator", () => {
 
     expect(result.replyText).toContain("超时")
     expect(result.replyText).toContain("拆分步骤")
+  })
+
+  test("returns signal-specific action hint when approval auto-run is interrupted", async () => {
+    const { orchestrator, store } = await newHarnessWithClient(new SignalBuildErrorOpenCodeClient(0))
+    let task = await orchestrator.createTask({
+      title: "Task",
+      description: "Implement",
+      source: { type: "feishu", userId: "ou_1", chatId: "oc_1", messageId: "m1" },
+      repo: { name: "repo", baseBranch: "main", worktreePath: ".", branch: "agent/test" },
+    })
+    task = await orchestrator.clarifyTask(task.taskId)
+    task.repo = { ...task.repo, worktreePath: ".", branch: "agent/test" }
+    await store.save(task)
+
+    const result = await orchestrator.processFeishuMessage({
+      requirement: {
+        userId: "ou_1",
+        chatId: "oc_1",
+        messageId: "m2",
+        text: "开始",
+      },
+      repoName: "repo",
+      autoRunOnApprove: true,
+    })
+
+    expect(result.replyText).toContain("中断")
+    expect(result.replyText).toContain("回复“状态”")
   })
 })

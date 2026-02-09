@@ -787,6 +787,21 @@ export class Orchestrator {
       `已尝试次数：${task.execution.attempt}/${task.execution.maxAttempts}`,
     ]
 
+    const questionProgress = this.questionProgressSummary(task)
+    if (questionProgress) {
+      lines.push(`问题进度：${questionProgress}`)
+    }
+
+    const planProgress = this.planProgressSummary(task)
+    if (planProgress) {
+      lines.push(`计划进度：${planProgress}`)
+    }
+
+    const activeStep = this.activeStepSummary(task)
+    if (activeStep) {
+      lines.push(`当前步骤：${activeStep}`)
+    }
+
     if (task.state === TaskState.WAIT_APPROVAL) {
       const openQuestions = openRequiredQuestions(task)
       if (openQuestions.length > 0) {
@@ -799,11 +814,6 @@ export class Orchestrator {
 
     if (task.execution.lastError) {
       lines.push(`最近错误：${task.execution.lastError}`)
-    }
-
-    const planProgress = this.planProgressSummary(task)
-    if (planProgress) {
-      lines.push(`计划进度：${planProgress}`)
     }
 
     const recentEvent = this.findLatestKeyEvent(task)
@@ -838,6 +848,30 @@ export class Orchestrator {
     const failed = task.plan.steps.filter((step) => step.status === StepStatus.FAILED).length
     const running = task.plan.steps.filter((step) => step.status === StepStatus.RUNNING).length
     return `已完成 ${completed}/${total}，进行中 ${running}，失败 ${failed}`
+  }
+
+  private activeStepSummary(task: Task): string | null {
+    if (!task.plan || task.plan.steps.length === 0) {
+      return null
+    }
+    const running = task.plan.steps.find((step) => step.status === StepStatus.RUNNING)
+    if (running) {
+      return running.title
+    }
+    const pending = task.plan.steps.find((step) => step.status === StepStatus.PENDING)
+    if (pending) {
+      return `${pending.title}（待执行）`
+    }
+    return null
+  }
+
+  private questionProgressSummary(task: Task): string | null {
+    if (!task.plan || task.plan.questions.length === 0) {
+      return null
+    }
+    const total = task.plan.questions.length
+    const answered = task.plan.questions.filter((question) => question.status === QuestionStatus.ANSWERED).length
+    return `已回答 ${answered}/${total}`
   }
 
   private nextActionHint(task: Task): string {
