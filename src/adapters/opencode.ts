@@ -286,6 +286,10 @@ export class OpenCodeRuntimeClient implements OpenCodeClient {
   }): Promise<OpenCodeRunResult> {
     const startedAt = Date.now()
     const command = [this.nodeCommand, this.sdkScript]
+    const finish = async (runResult: OpenCodeRunResult, stdout = ""): Promise<OpenCodeRunResult> => {
+      await this.writeAgentLog(params.taskId, command, params.workspace, runResult, stdout)
+      return runResult
+    }
     const payload = {
       agent: params.agent,
       prompt: params.prompt,
@@ -306,7 +310,7 @@ export class OpenCodeRuntimeClient implements OpenCodeClient {
       })
 
       if (result.error) {
-        return {
+        return finish({
           agent: params.agent,
           returnCode: result.status ?? 1,
           executionMode: "host",
@@ -319,7 +323,7 @@ export class OpenCodeRuntimeClient implements OpenCodeClient {
           usage: {},
           stderr: result.error.message,
           error: `OpenCode SDK bridge failed: ${result.error.message}`,
-        }
+        }, result.stdout ?? "")
       }
 
       const stdout = result.stdout ?? ""
@@ -329,7 +333,7 @@ export class OpenCodeRuntimeClient implements OpenCodeClient {
         const message =
           (parsed && typeof parsed.error === "string" ? parsed.error : "OpenCode SDK bridge returned failure") +
           (parsed && typeof parsed.details === "string" ? `: ${parsed.details}` : "")
-        return {
+        return finish({
           agent: params.agent,
           returnCode: result.status ?? 1,
           executionMode: "host",
@@ -342,7 +346,7 @@ export class OpenCodeRuntimeClient implements OpenCodeClient {
           usage: {},
           stderr,
           error: message,
-        }
+        }, stdout)
       }
 
       const parts = Array.isArray(parsed.parts)
@@ -368,11 +372,10 @@ export class OpenCodeRuntimeClient implements OpenCodeClient {
         },
         stderr,
       }
-      await this.writeAgentLog(params.taskId, command, params.workspace, runResult, stdout)
-      return runResult
+      return finish(runResult, stdout)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      return {
+      return finish({
         agent: params.agent,
         returnCode: 1,
         executionMode: "host",
@@ -385,7 +388,7 @@ export class OpenCodeRuntimeClient implements OpenCodeClient {
         usage: {},
         stderr: message,
         error: `OpenCode SDK execution failed: ${message}`,
-      }
+      })
     }
   }
 

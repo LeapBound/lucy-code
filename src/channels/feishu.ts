@@ -19,6 +19,9 @@ export interface FeishuAppCredentials {
   enabled: boolean
 }
 
+const MAX_FEISHU_MESSAGE_CHARS = 4000
+const MAX_FEISHU_MESSAGE_PARTS = 5
+
 export async function loadFeishuCredentialsFromNanobot(
   configPath = "~/.nanobot/config.json",
 ): Promise<FeishuAppCredentials> {
@@ -85,14 +88,21 @@ export class FeishuMessenger {
 
   async sendText(chatId: string, text: string): Promise<void> {
     const token = await this.tenantAccessToken()
-    const response = await this.request("POST", "/im/v1/messages?receive_id_type=chat_id", {
-      receive_id: chatId,
-      msg_type: "text",
-      content: JSON.stringify({ text }),
-    }, token)
+    const parts = splitMessageForFeishu(text, {
+      maxChars: MAX_FEISHU_MESSAGE_CHARS,
+      maxParts: MAX_FEISHU_MESSAGE_PARTS,
+    })
 
-    if (response.code !== 0) {
-      throw new OrchestratorError(`Failed to send Feishu message: ${JSON.stringify(response)}`)
+    for (const part of parts) {
+      const response = await this.request("POST", "/im/v1/messages?receive_id_type=chat_id", {
+        receive_id: chatId,
+        msg_type: "text",
+        content: JSON.stringify({ text: part }),
+      }, token)
+
+      if (response.code !== 0) {
+        throw new OrchestratorError(`Failed to send Feishu message: ${JSON.stringify(response)}`)
+      }
     }
   }
 
@@ -128,4 +138,46 @@ export class FeishuMessenger {
       timeoutMs: 10_000,
     })
   }
+}
+
+export function splitMessageForFeishu(
+  text: string,
+  options: { maxChars?: number; maxParts?: number } = {},
+): string[] {
+  const maxChars = options.maxChars ?? MAX_FEISHU_MESSAGE_CHARS
+  const maxParts = options.maxParts ?? MAX_FEISHU_MESSAGE_PARTS
+  const normalized = text.trim()
+  if (!normalized) {
+    return [""]
+  }
+
+  const chunks: string[] = []
+  let rest = normalized
+  while (rest.length > maxChars && chunks.length < maxParts - 1) {
+    const boundary = findSplitBoundary(rest, maxChars)
+    chunks.push(rest.slice(0, boundary).trim())
+    rest = rest.slice(boundary).trimStart()
+  }
+
+  if (rest.length <= maxChars) {
+    chunks.push(rest)
+    return chunks
+  }
+
+  const tailLimit = Math.max(0, maxChars - 1)
+  chunks.push(`${rest.slice(0, tailLimit)}…`)
+  return chunks
+}
+
+function findSplitBoundary(text: string, maxChars: number): number {
+  const candidate = text.slice(0, maxChars)
+  const newlineIndex = candidate.lastIndexOf("\n")
+  if (newlineIndex > Math.floor(maxChars * 0.4)) {
+    return newlineIndex + 1
+  }
+  const spaceIndex = candidate.lastIndexOf(" ")
+  if (spaceIndex > Math.floor(maxChars * 0.5)) {
+    return spaceIndex + 1
+  }
+  return maxChars
 }
