@@ -2,6 +2,7 @@ import { Command } from "commander"
 
 import { mkdir, writeFile } from "node:fs/promises"
 import { dirname, resolve } from "node:path"
+import { createHash } from "node:crypto"
 
 import { OpenCodeRuntimeClient } from "./adapters/opencode.js"
 import {
@@ -606,8 +607,18 @@ export async function main(): Promise<void> {
 
       if (typeof commandOptions.reportFile === "string" && commandOptions.reportFile.trim()) {
         const reportPath = resolve(commandOptions.reportFile)
+        const reportEnvelope = {
+          metadata: {
+            generatedAt: new Date().toISOString(),
+            schemaVersion: "store-prune-report/v1",
+            nodeVersion: process.version,
+            cliVersion: process.env.npm_package_version ?? "unknown",
+            dataSha256: sha256Json(output),
+          },
+          data: output,
+        }
         await mkdir(dirname(reportPath), { recursive: true })
-        await writeFile(reportPath, `${JSON.stringify(output, null, 2)}\n`, "utf-8")
+        await writeFile(reportPath, `${JSON.stringify(reportEnvelope, null, 2)}\n`, "utf-8")
       }
 
       printJson(output)
@@ -714,6 +725,10 @@ function summarizeTasksByState(tasks: Array<{ state: string }>): Record<string, 
     summary[task.state] = (summary[task.state] ?? 0) + 1
   }
   return summary
+}
+
+function sha256Json(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex")
 }
 
 export function resolveStorePruneInput(commandOptions: Record<string, unknown>): {

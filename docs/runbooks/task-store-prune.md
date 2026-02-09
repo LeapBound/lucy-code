@@ -17,6 +17,13 @@ npm run dev -- store-prune \
 
 Review output, then run without `--dry-run`.
 
+## Pre-Run Backup (Recommended)
+
+```bash
+mkdir -p .orchestrator/backups
+cp -a .orchestrator/tasks ".orchestrator/backups/tasks-$(date +%Y%m%d-%H%M%S)"
+```
+
 ## Production Usage
 
 ```bash
@@ -38,6 +45,8 @@ npm run dev -- store-prune \
 - `--report-file`: persist JSON result for audit / rollback tracking.
 - 命令输出包含 `before/after` 状态分布摘要，可直接用于观察清理效果。
 
+Report file now includes metadata (`generatedAt`, `schemaVersion`, `dataSha256`) and payload.
+
 ## Scheduling Example (cron)
 
 ```bash
@@ -49,3 +58,15 @@ npm run dev -- store-prune \
 1. Run `npm run dev -- list` and verify active tasks still exist.
 2. Check logs for `task-store.prune` warnings about unreadable files.
 3. For any warning files, inspect and remove manually if required.
+
+## Recovery (If Over-Pruned)
+
+1. Locate the latest prune report (`--report-file`) and inspect `data.result.taskIds`.
+2. Restore from pre-run backup:
+
+```bash
+cp -a .orchestrator/backups/tasks-<timestamp>/. .orchestrator/tasks/
+```
+
+3. Re-run `npm run dev -- list` and verify recovered task IDs are present.
+4. If backup is unavailable, recover from external storage snapshot or incident backup workflow.
