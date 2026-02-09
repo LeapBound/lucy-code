@@ -45,4 +45,29 @@ describe("FeishuConversationStore", () => {
     const loaded = await store.getDraft("c2", "u2")
     expect(loaded?.text).toBe("task details")
   })
+
+  test("serializes concurrent append operations on same draft", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lucy-conversation-store-"))
+    const path = join(root, "drafts.json")
+    const store = new FeishuConversationStore(path)
+
+    await store.setDraft({
+      chatId: "c3",
+      userId: "u3",
+      messageId: "m0",
+      text: "base",
+    })
+
+    await Promise.all([
+      store.appendToDraft("c3", "u3", "m1", "a"),
+      store.appendToDraft("c3", "u3", "m2", "b"),
+      store.appendToDraft("c3", "u3", "m3", "c"),
+    ])
+
+    const loaded = await store.getDraft("c3", "u3")
+    expect(loaded?.text).toContain("base")
+    expect(loaded?.text).toContain("a")
+    expect(loaded?.text).toContain("b")
+    expect(loaded?.text).toContain("c")
+  })
 })

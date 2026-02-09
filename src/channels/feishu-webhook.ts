@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
-import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { dirname, resolve } from "node:path"
 
 import { errorCodeOf, OrchestratorError } from "../errors.js"
@@ -27,6 +27,7 @@ export class ProcessedMessageStore {
   private readonly filePath: string
   private seen = new Set<string>()
   private loaded = false
+  private writeChain: Promise<void> = Promise.resolve()
 
   constructor(filePath = ".orchestrator/feishu_seen_messages.json") {
     this.filePath = resolve(filePath)
@@ -38,12 +39,14 @@ export class ProcessedMessageStore {
   }
 
   async add(messageId: string): Promise<void> {
-    await this.load()
-    if (this.seen.has(messageId)) {
-      return
-    }
-    this.seen.add(messageId)
-    await this.persist()
+    await this.withWriteLock(async () => {
+      await this.load()
+      if (this.seen.has(messageId)) {
+        return
+      }
+      this.seen.add(messageId)
+      await this.persist()
+    })
   }
 
   private async load(): Promise<void> {
@@ -85,7 +88,15 @@ export class ProcessedMessageStore {
 
   private async persist(): Promise<void> {
     await mkdir(dirname(this.filePath), { recursive: true })
-    await writeFile(this.filePath, `${JSON.stringify([...this.seen].sort(), null, 2)}\n`, "utf-8")
+    const tempPath = `${this.filePath}.tmp-${process.pid}-${Date.now()}`
+    await writeFile(tempPath, `${JSON.stringify([...this.seen].sort(), null, 2)}\n`, "utf-8")
+    await rename(tempPath, this.filePath)
+  }
+
+  private async withWriteLock<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.writeChain.then(operation, operation)
+    this.writeChain = run.then(() => undefined, () => undefined)
+    return run
   }
 }
 

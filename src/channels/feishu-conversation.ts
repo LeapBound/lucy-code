@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { dirname, resolve } from "node:path"
 
 import { logWarn } from "../logger.js"
@@ -22,6 +22,7 @@ export class FeishuConversationStore {
   private readonly filePath: string
   private loaded = false
   private drafts = new Map<string, FeishuDraft>()
+  private writeChain: Promise<void> = Promise.resolve()
 
   constructor(filePath = ".orchestrator/feishu_conversations.json") {
     this.filePath = resolve(filePath)
@@ -39,47 +40,53 @@ export class FeishuConversationStore {
    * Set a new draft for the user chat
    */
   async setDraft(draft: Omit<FeishuDraft, "createdAt" | "updatedAt">): Promise<FeishuDraft> {
-    await this.load()
-    const now = new Date().toISOString()
-    const full: FeishuDraft = {
-      ...draft,
-      createdAt: now,
-      updatedAt: now,
-    }
-    this.drafts.set(this.key(draft.chatId, draft.userId), full)
-    await this.persist()
-    return full
+    return this.withWriteLock(async () => {
+      await this.load()
+      const now = new Date().toISOString()
+      const full: FeishuDraft = {
+        ...draft,
+        createdAt: now,
+        updatedAt: now,
+      }
+      this.drafts.set(this.key(draft.chatId, draft.userId), full)
+      await this.persist()
+      return full
+    })
   }
 
   /**
    * Append to an existing draft (for multi-message clarification)
    */
   async appendToDraft(chatId: string, userId: string, messageId: string, text: string): Promise<FeishuDraft | null> {
-    await this.load()
-    const key = this.key(chatId, userId)
-    const existing = this.drafts.get(key)
-    if (!existing) {
-      return null
-    }
-    const now = new Date().toISOString()
-    const updated: FeishuDraft = {
-      ...existing,
-      messageId,
-      text: `${existing.text}\n${text}`.trim(),
-      updatedAt: now,
-    }
-    this.drafts.set(key, updated)
-    await this.persist()
-    return updated
+    return this.withWriteLock(async () => {
+      await this.load()
+      const key = this.key(chatId, userId)
+      const existing = this.drafts.get(key)
+      if (!existing) {
+        return null
+      }
+      const now = new Date().toISOString()
+      const updated: FeishuDraft = {
+        ...existing,
+        messageId,
+        text: `${existing.text}\n${text}`.trim(),
+        updatedAt: now,
+      }
+      this.drafts.set(key, updated)
+      await this.persist()
+      return updated
+    })
   }
 
   /**
    * Clear draft after user confirms intent or cancels
    */
   async clearDraft(chatId: string, userId: string): Promise<void> {
-    await this.load()
-    this.drafts.delete(this.key(chatId, userId))
-    await this.persist()
+    await this.withWriteLock(async () => {
+      await this.load()
+      this.drafts.delete(this.key(chatId, userId))
+      await this.persist()
+    })
   }
 
   private async load(): Promise<void> {
@@ -146,7 +153,15 @@ export class FeishuConversationStore {
     for (const [key, draft] of this.drafts.entries()) {
       payload[key] = draft
     }
-    await writeFile(this.filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf-8")
+    const tempPath = `${this.filePath}.tmp-${process.pid}-${Date.now()}`
+    await writeFile(tempPath, `${JSON.stringify(payload, null, 2)}\n`, "utf-8")
+    await rename(tempPath, this.filePath)
+  }
+
+  private async withWriteLock<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.writeChain.then(operation, operation)
+    this.writeChain = run.then(() => undefined, () => undefined)
+    return run
   }
 
   private key(chatId: string, userId: string): string {

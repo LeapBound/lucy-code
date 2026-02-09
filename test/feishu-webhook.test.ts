@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from "node:fs/promises"
+import { mkdtemp, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { describe, expect, test, vi } from "vitest"
@@ -74,5 +74,20 @@ describe("ProcessedMessageStore", () => {
     await expect(store.has("m2")).resolves.toBe(false)
     await expect(store.add("m2")).resolves.toBeUndefined()
     await expect(store.has("m2")).resolves.toBe(true)
+  })
+
+  test("serializes concurrent add operations without losing message ids", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lucy-webhook-store-"))
+    const path = join(root, "seen.json")
+    const store = new ProcessedMessageStore(path)
+
+    const ids = Array.from({ length: 20 }, (_, index) => `m_${index}`)
+    await Promise.all(ids.map((id) => store.add(id)))
+
+    const persisted = JSON.parse(await readFile(path, "utf-8")) as string[]
+    expect(persisted.length).toBe(20)
+    for (const id of ids) {
+      await expect(store.has(id)).resolves.toBe(true)
+    }
   })
 })
