@@ -1,10 +1,13 @@
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises"
+import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
 import { TaskNotFoundError } from "./errors.js"
+import { logWarn } from "./logger.js"
 import { parseTask, serializeTask, type Task } from "./models.js"
 
 export class TaskStore {
+  private readonly writeChains = new Map<string, Promise<void>>()
+
   constructor(private readonly rootDir: string) {}
 
   private taskPath(taskId: string): string {
@@ -12,9 +15,14 @@ export class TaskStore {
   }
 
   async save(task: Task): Promise<void> {
-    await mkdir(this.rootDir, { recursive: true })
-    const payload = serializeTask(task)
-    await writeFile(this.taskPath(task.taskId), `${JSON.stringify(payload, null, 2)}\n`, "utf-8")
+    await this.withTaskWriteLock(task.taskId, async () => {
+      await mkdir(this.rootDir, { recursive: true })
+      const payload = serializeTask(task)
+      const targetPath = this.taskPath(task.taskId)
+      const tempPath = `${targetPath}.tmp-${process.pid}-${Date.now()}`
+      await writeFile(tempPath, `${JSON.stringify(payload, null, 2)}\n`, "utf-8")
+      await rename(tempPath, targetPath)
+    })
   }
 
   async get(taskId: string): Promise<Task> {
@@ -38,10 +46,33 @@ export class TaskStore {
       if (!fileName.endsWith(".json")) {
         continue
       }
-      const content = await readFile(join(this.rootDir, fileName), "utf-8")
-      tasks.push(parseTask(JSON.parse(content)))
+      const path = join(this.rootDir, fileName)
+      try {
+        const content = await readFile(path, "utf-8")
+        tasks.push(parseTask(JSON.parse(content)))
+      } catch (error) {
+        logWarn("Skipping unreadable task file while listing tasks", {
+          phase: "task-store.list",
+          filePath: path,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
     }
 
     return tasks.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+  }
+
+  private async withTaskWriteLock<T>(taskId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.writeChains.get(taskId) ?? Promise.resolve()
+    const run = previous.then(operation, operation)
+    const chain = run.then(() => undefined, () => undefined)
+    this.writeChains.set(taskId, chain)
+    try {
+      return await run
+    } finally {
+      if (this.writeChains.get(taskId) === chain) {
+        this.writeChains.delete(taskId)
+      }
+    }
   }
 }
