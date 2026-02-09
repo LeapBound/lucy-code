@@ -29,6 +29,8 @@ export const enum StepStatus {
   FAILED = "failed",
 }
 
+const MAX_TASK_EVENT_LOG_ENTRIES = 500
+
 export interface PlanQuestion {
   id: string
   question: string
@@ -187,6 +189,9 @@ export function recordTaskEvent(
     message,
     payload,
   })
+  if (task.eventLog.length > MAX_TASK_EVENT_LOG_ENTRIES) {
+    task.eventLog.splice(0, task.eventLog.length - MAX_TASK_EVENT_LOG_ENTRIES)
+  }
   task.updatedAt = utcNowIso()
 }
 
@@ -226,7 +231,7 @@ export function parseTask(payload: unknown): Task {
 
   const plan = parsePlan(planRaw)
 
-  const eventLog = Array.isArray(value.event_log)
+  const eventLogRaw = Array.isArray(value.event_log)
     ? value.event_log
         .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
         .map((item) => ({
@@ -236,6 +241,10 @@ export function parseTask(payload: unknown): Task {
           payload: typeof item.payload === "object" && item.payload ? (item.payload as Record<string, unknown>) : {},
         }))
     : []
+  const eventLog =
+    eventLogRaw.length > MAX_TASK_EVENT_LOG_ENTRIES
+      ? eventLogRaw.slice(eventLogRaw.length - MAX_TASK_EVENT_LOG_ENTRIES)
+      : eventLogRaw
 
   return {
     taskId: String(value.task_id ?? value.taskId ?? createTaskId()),
