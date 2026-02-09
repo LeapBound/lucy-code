@@ -124,4 +124,23 @@ describe("ProcessedMessageStore", () => {
       await expect(store.has(id)).resolves.toBe(true)
     }
   })
+
+  test("prunes oldest ids when max entries is exceeded", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lucy-webhook-store-"))
+    const path = join(root, "seen.json")
+    const store = new ProcessedMessageStore(path, 3)
+
+    await store.add("m1")
+    await store.add("m2")
+    await store.add("m3")
+    await store.add("m4")
+
+    await expect(store.has("m1")).resolves.toBe(false)
+    await expect(store.has("m2")).resolves.toBe(true)
+    await expect(store.has("m3")).resolves.toBe(true)
+    await expect(store.has("m4")).resolves.toBe(true)
+
+    const persisted = JSON.parse(await readFile(path, "utf-8")) as string[]
+    expect(persisted).toEqual(["m2", "m3", "m4"])
+  })
 })

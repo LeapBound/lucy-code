@@ -25,12 +25,14 @@ export interface FeishuWebhookSettings {
 
 export class ProcessedMessageStore {
   private readonly filePath: string
+  private readonly maxEntries: number
   private seen = new Set<string>()
   private loaded = false
   private writeChain: Promise<void> = Promise.resolve()
 
-  constructor(filePath = ".orchestrator/feishu_seen_messages.json") {
+  constructor(filePath = ".orchestrator/feishu_seen_messages.json", maxEntries = 10_000) {
     this.filePath = resolve(filePath)
+    this.maxEntries = maxEntries > 0 ? Math.trunc(maxEntries) : 10_000
   }
 
   async has(messageId: string): Promise<boolean> {
@@ -45,6 +47,7 @@ export class ProcessedMessageStore {
         return
       }
       this.seen.add(messageId)
+      this.enforceLimit()
       await this.persist()
     })
   }
@@ -89,8 +92,18 @@ export class ProcessedMessageStore {
   private async persist(): Promise<void> {
     await mkdir(dirname(this.filePath), { recursive: true })
     const tempPath = `${this.filePath}.tmp-${process.pid}-${Date.now()}`
-    await writeFile(tempPath, `${JSON.stringify([...this.seen].sort(), null, 2)}\n`, "utf-8")
+    await writeFile(tempPath, `${JSON.stringify([...this.seen], null, 2)}\n`, "utf-8")
     await rename(tempPath, this.filePath)
+  }
+
+  private enforceLimit(): void {
+    while (this.seen.size > this.maxEntries) {
+      const oldest = this.seen.values().next().value
+      if (typeof oldest !== "string") {
+        break
+      }
+      this.seen.delete(oldest)
+    }
   }
 
   private async withWriteLock<T>(operation: () => Promise<T>): Promise<T> {
